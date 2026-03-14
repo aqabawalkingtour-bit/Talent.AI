@@ -24,3 +24,7 @@ export default defineConfig(({mode}) => {
     },
   };
 });
+export default defineConfig({
+  base: '/Talent.AI/', // Add this line with your exact repo name
+  plugins: [react()],
+})
