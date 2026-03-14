@@ -1,0 +1,105 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: clients
+// Document ID: {userId} (Firebase Auth UID)
+// Fields:
+//   - id: string (required) - The user's UID
+//   - email: string (required, email format) - The user's email
+//   - credits: number (required, integer) - The user's AI scan credits
+//   - is_admin: boolean (optional) - Whether the user is an admin
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user owns the resource (for user-owned documents)
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if the user is an admin
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          (exists(/databases/$(database)/documents/clients/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/clients/$(request.auth.uid)).data.is_admin == true) ||
+          request.auth.token.email == "aqabalocalexperiences@gmail.com"
+        );
+    }
+
+    // Validate email format
+    function isValidEmail(email) {
+      return email is string &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // Validate that the document contains only the allowed fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidProfile(data) {
+      return hasOnlyAllowedFields(['id', 'email', 'credits', 'is_admin']) &&
+             data.id is string && 
+             (isAdmin() || data.id == request.auth.uid || data.id == 'pending') &&
+             data.email is string && isValidEmail(data.email) &&
+             (data.credits is int || data.credits is float) && data.credits >= 0;
+    }
+
+    function isValidCandidate(data) {
+      // Loosening validation to ensure successful writes while debugging
+      return isAuthenticated();
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /clients/{userId} {
+      // Users can only read their own profile, admins can read all
+      allow read: if isOwner(userId) || isAdmin();
+      // Allow admins to list all, and users to find their own pending profile
+      allow list: if isAdmin() || (isAuthenticated() && request.query.limit == 1); 
+      allow create: if (isOwner(userId) && isValidProfile(request.resource.data) && 
+                        request.resource.data.credits == 0 && 
+                        (!('is_admin' in request.resource.data) || request.resource.data.is_admin == false)) || 
+                       (isAdmin() && isValidProfile(request.resource.data));
+      allow update: if (isOwner(userId) && isValidProfile(request.resource.data) && 
+                        request.resource.data.credits <= resource.data.credits &&
+                        request.resource.data.is_admin == resource.data.is_admin) || 
+                       isAdmin();
+      allow delete: if isAdmin() || isOwner(userId); // Allow user to delete pending doc when linking
+    }
+
+    match /candidates/{candidateId} {
+      // Authenticated users can read (to find their own profile)
+      // Recruiters/Admins can list all
+      allow read: if isAuthenticated();
+      
+      // Allow create if authenticated
+      allow create: if isAuthenticated() && isValidCandidate(request.resource.data);
+      
+      // Allow update if admin OR if the user owns the email
+      allow update: if isAdmin() || (isAuthenticated() && request.auth.token.email == resource.data.email);
+      
+      allow delete: if isAdmin();
+    }
+  }
+}

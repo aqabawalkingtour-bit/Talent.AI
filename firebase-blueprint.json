@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "clients": {
+      "title": "Client Profile",
+      "description": "Stores client profile information, including credits and admin status.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The unique identifier for the client (Firebase Auth UID)."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "The client's email address."
+        },
+        "credits": {
+          "type": "integer",
+          "description": "The number of AI scan credits the client has."
+        },
+        "is_admin": {
+          "type": "boolean",
+          "description": "Whether the client has administrator privileges."
+        }
+      },
+      "required": ["id", "email", "credits"]
+    },
+    "candidates": {
+      "title": "Candidate",
+      "description": "Stores candidate CV data and match results.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "full_name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "skills": { "type": "array", "items": { "type": "string" } },
+        "summary": { "type": "string" },
+        "match_score": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["full_name", "email"]
+    }
+  },
+  "firestore": {
+    "clients/{userId}": {
+      "schema": "clients",
+      "description": "A collection of client profiles, keyed by their Firebase Auth UID."
+    },
+    "candidates/{candidateId}": {
+      "schema": "candidates",
+      "description": "A collection of scanned candidates."
+    }
+  }
+}

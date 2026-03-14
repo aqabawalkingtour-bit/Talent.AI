@@ -1,0 +1,5 @@
+{
+  "name": "AI Talent Matcher",
+  "description": "An AI-powered recruitment platform that scans CVs, matches candidates to job posts, and generates employment contracts.",
+  "requestFramePermissions": []
+}
