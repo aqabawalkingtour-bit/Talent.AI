@@ -98,6 +98,38 @@ export interface MatchResult {
   reasoning: string;
 }
 
+// Helper function to robustly parse JSON from AI responses
+function parseJSONFromResponse(text: string): any {
+  try {
+    // First, try direct parsing
+    return JSON.parse(text);
+  } catch (e) {
+    // If that fails, try to extract JSON from markdown code blocks
+    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch && jsonMatch[1]) {
+      try {
+        return JSON.parse(jsonMatch[1].trim());
+      } catch (e2) {
+        console.error("Failed to parse JSON from markdown block:", jsonMatch[1]);
+      }
+    }
+    
+    // Try to find JSON object pattern
+    const objectMatch = text.match(/\{[\s\S]*\}/);
+    if (objectMatch) {
+      try {
+        return JSON.parse(objectMatch[0]);
+      } catch (e3) {
+        console.error("Failed to parse JSON object:", objectMatch[0]);
+      }
+    }
+    
+    // If all else fails, return empty object
+    console.error("Could not parse JSON from response:", text);
+    return {};
+  }
+}
+
 export const scanCV = async (fileData: string, mimeType: string, jobDescription?: string, isRawText: boolean = false): Promise<{profile: CandidateProfile, match?: MatchResult}> => {
   if (!apiKey) {
     throw new Error("API key is missing. Please set the GEMINI_API_KEY in your GitHub repository Secrets (Settings → Secrets and variables → Actions) and redeploy the app.");
@@ -140,7 +172,7 @@ export const scanCV = async (fileData: string, mimeType: string, jobDescription?
       ],
     });
 
-    const result = JSON.parse(response.text || "{}");
+    const result = parseJSONFromResponse(response.text || "{}");
     
     const profile: CandidateProfile = {
       id: Math.random().toString(36).substr(2, 9),
@@ -188,7 +220,7 @@ export const matchCandidate = async (profile: CandidateProfile, jobDescription: 
       `,
     });
 
-    return JSON.parse(response.text || "{}");
+    return parseJSONFromResponse(response.text || "{}");
   } catch (error: any) {
     console.error("Error in matchCandidate:", error);
     throw error;
