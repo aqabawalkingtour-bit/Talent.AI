@@ -135,62 +135,60 @@ export const scanCV = async (fileData: string, mimeType: string, jobDescription?
     throw new Error("API key is missing. Please set the GEMINI_API_KEY in your GitHub repository Secrets (Settings → Secrets and variables → Actions) and redeploy the app.");
   }
 
-  try {
-    let prompt = `Extract the candidate's professional profile from this CV with high precision. 
-    Include contact details, location, LinkedIn, skills, detailed work experience, education, certifications, and languages.
+   try {
+    let prompt = `Quickly extract the candidate's professional profile from this CV. 
     
-    ${jobDescription ? `Also, perform a deep analysis against this Job Description: "${jobDescription}". 
-    Evaluate technical fit, soft skills, and experience level. Provide a match score (0-100).` : ''}
+    Return ONLY valid JSON (no markdown, no code blocks) with these exact fields:
+    - full_name (string)
+    - email (string or null)
+    - phone (string or null)
+    - location (string or null)
+    - linkedin (string or null)
+    - skills (array of strings)
+    - experience (array of {title, company, duration, description})
+    - education (array of {degree, institution, year})
+    - certifications (array of strings or null)
+    - languages (array of strings or null)
+    - summary (string)
+    ${jobDescription ? `- match_score (number 0-100 based on fit to: "${jobDescription}")` : ''}
     
-    Return the data in a structured JSON format with fields: full_name, email, phone, location, linkedin, skills (array), 
-    experience (array with title, company, duration, description), education (array with degree, institution, year), 
-    certifications (array), languages (array), summary, and match_score (if JD provided).`;
+    Be concise and accurate. Return ONLY the JSON object, nothing else.`;
 
-    let contentPart;
-    if (isRawText) {
-      contentPart = { text: `CV Content:\n${fileData}` };
-    } else {
-      // For PDF/file data, use the inlineData format
-      const base64Data = fileData.includes(',') ? fileData.split(',')[1] : fileData;
-      contentPart = {
-        inlineData: {
-          data: base64Data,
-          mimeType: mimeType,
-        },
-      };
-    }
+    // Always use text format for faster processing
+    const contentPart = { text: `CV Content:\n${fileData}` };
 
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
       contents: [
         {
           parts: [
-            contentPart,
             { text: prompt },
+            contentPart,
           ],
         },
       ],
     });
 
-    const result = parseJSONFromResponse(response.text || "{}");
+    const responseText = response.text || "{}";
+    const result = parseJSONFromResponse(responseText);
     
     const profile: CandidateProfile = {
       id: Math.random().toString(36).substr(2, 9),
-      full_name: result.full_name,
-      email: result.email,
+      full_name: result.full_name || "Unknown",
+      email: result.email || "",
       phone: result.phone,
       location: result.location,
       linkedin: result.linkedin,
-      skills: result.skills || [],
-      experience: result.experience || [],
-      education: result.education || [],
-      certifications: result.certifications,
-      languages: result.languages,
-      summary: result.summary
+      skills: Array.isArray(result.skills) ? result.skills : [],
+      experience: Array.isArray(result.experience) ? result.experience : [],
+      education: Array.isArray(result.education) ? result.education : [],
+      certifications: Array.isArray(result.certifications) ? result.certifications : [],
+      languages: Array.isArray(result.languages) ? result.languages : [],
+      summary: result.summary || ""
     };
 
     const match: MatchResult | undefined = result.match_score !== undefined ? {
-      score: result.match_score,
+      score: Math.min(100, Math.max(0, result.match_score)),
       strengths: [],
       gaps: [],
       reasoning: "Extracted during initial scan"

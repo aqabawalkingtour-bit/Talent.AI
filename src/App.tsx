@@ -32,6 +32,7 @@ import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import mammoth from 'mammoth';
+import { extractTextFromPDF } from './utils/pdfExtractor';
 import { 
   scanCV, 
   matchCandidate, 
@@ -409,6 +410,11 @@ export default function App() {
               const result = await mammoth.extractRawText({ arrayBuffer });
               scanData = result.value;
               isRawText = true;
+            } else if (file.type === 'application/pdf') {
+              // Extract text from PDF for faster processing
+              const arrayBuffer = e.target?.result as ArrayBuffer;
+              scanData = await extractTextFromPDF(arrayBuffer);
+              isRawText = true;
             } else {
               scanData = e.target?.result as string;
             }
@@ -441,7 +447,7 @@ export default function App() {
         };
       });
       
-      if (isWordDoc) {
+      if (isWordDoc || file.type === 'application/pdf') {
         reader.readAsArrayBuffer(file);
       } else {
         reader.readAsDataURL(file);
