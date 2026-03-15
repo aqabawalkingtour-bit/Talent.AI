@@ -92,7 +92,7 @@ export interface MatchResult {
   reasoning: string;
 }
 
-const MODEL_NAME = "gemini-1.5-flash-latest";
+const MODEL_NAME = "gemini-pro";
 console.log("Using Gemini Model:", MODEL_NAME);
 
 // Diagnostic function to list available models
@@ -100,10 +100,17 @@ const listAvailableModels = async () => {
   try {
     const models = await ai.models.list();
     console.log("Available Gemini models:", models);
+    return models;
   } catch (error) {
     console.error("Error listing models:", error);
+    return null;
   }
 };
+
+// Call on initialization to log available models
+if (apiKey) {
+  listAvailableModels().catch(console.error);
+}
 
 export const scanCV = async (fileData: string, mimeType: string, jobDescription?: string, isRawText: boolean = false): Promise<{profile: CandidateProfile, match?: MatchResult}> => {
   if (!apiKey) {
