@@ -92,8 +92,18 @@ export interface MatchResult {
   reasoning: string;
 }
 
-const MODEL_NAME = "gemini-1.5-flash";
+const MODEL_NAME = "gemini-1.5-flash-latest";
 console.log("Using Gemini Model:", MODEL_NAME);
+
+// Diagnostic function to list available models
+const listAvailableModels = async () => {
+  try {
+    const models = await ai.models.list();
+    console.log("Available Gemini models:", models);
+  } catch (error) {
+    console.error("Error listing models:", error);
+  }
+};
 
 export const scanCV = async (fileData: string, mimeType: string, jobDescription?: string, isRawText: boolean = false): Promise<{profile: CandidateProfile, match?: MatchResult}> => {
   if (!apiKey) {
@@ -109,7 +119,8 @@ export const scanCV = async (fileData: string, mimeType: string, jobDescription?
       };
 
   console.log("Calling scanCV with model:", MODEL_NAME);
-  const response = await ai.models.generateContent({
+  try {
+    const response = await ai.models.generateContent({
     model: MODEL_NAME,
     contents: [
       {
@@ -194,7 +205,15 @@ export const scanCV = async (fileData: string, mimeType: string, jobDescription?
     reasoning: "Extracted during initial scan"
   } : undefined;
 
-  return { profile, match };
+    return { profile, match };
+  } catch (error: any) {
+    console.error("Error in scanCV:", error);
+    if (error.message && error.message.includes("not found")) {
+      console.log("Model not found. Attempting to list available models...");
+      await listAvailableModels();
+    }
+    throw error;
+  }
 };
 
 export const matchCandidate = async (profile: CandidateProfile, jobDescription: string): Promise<MatchResult> => {
