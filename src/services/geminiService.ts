@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { supabase } from "./supabaseClient";
 import { db, auth } from "../firebase";
 import { doc, getDoc, setDoc, updateDoc, runTransaction, collection, getDocs, query, orderBy, deleteDoc, serverTimestamp, where, limit } from "firebase/firestore";
@@ -8,8 +8,8 @@ if (!apiKey) {
   console.error("GEMINI_API_KEY is not set. Please configure it in your environment variables or GitHub Secrets.");
 }
 
-// Initialize with the correct GoogleGenerativeAI client
-const genAI = new GoogleGenerativeAI(apiKey);
+// Initialize with the correct GoogleGenAI client
+const ai = new GoogleGenAI({ apiKey });
 
 // Use gemini-2.0-flash-exp (Gemini Flash 3) which is the latest and most capable model
 const MODEL_NAME = "gemini-2.0-flash-exp";
@@ -104,8 +104,6 @@ export const scanCV = async (fileData: string, mimeType: string, jobDescription?
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-    
     let prompt = `Extract the candidate's professional profile from this CV with high precision. 
     Include contact details, location, LinkedIn, skills, detailed work experience, education, certifications, and languages.
     
@@ -116,28 +114,33 @@ export const scanCV = async (fileData: string, mimeType: string, jobDescription?
     experience (array with title, company, duration, description), education (array with degree, institution, year), 
     certifications (array), languages (array), summary, and match_score (if JD provided).`;
 
-    let response;
+    let contentPart;
     if (isRawText) {
-      response = await model.generateContent([
-        { text: `CV Content:\n${fileData}` },
-        { text: prompt }
-      ]);
+      contentPart = { text: `CV Content:\n${fileData}` };
     } else {
       // For PDF/file data, use the inlineData format
       const base64Data = fileData.includes(',') ? fileData.split(',')[1] : fileData;
-      response = await model.generateContent([
-        {
-          inlineData: {
-            data: base64Data,
-            mimeType: mimeType,
-          },
+      contentPart = {
+        inlineData: {
+          data: base64Data,
+          mimeType: mimeType,
         },
-        { text: prompt }
-      ]);
+      };
     }
 
-    const responseText = response.response.text();
-    const result = JSON.parse(responseText);
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: [
+        {
+          parts: [
+            contentPart,
+            { text: prompt },
+          ],
+        },
+      ],
+    });
+
+    const result = JSON.parse(response.text || "{}");
     
     const profile: CandidateProfile = {
       id: Math.random().toString(36).substr(2, 9),
@@ -174,19 +177,18 @@ export const matchCandidate = async (profile: CandidateProfile, jobDescription: 
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-    
-    const prompt = `
-      Candidate Profile: ${JSON.stringify(profile)}
-      Job Description: ${jobDescription}
-      
-      Analyze how well this candidate fits the job. Provide a match score (0-100), key strengths, missing gaps, and a brief reasoning.
-      Return as JSON with fields: score, strengths (array), gaps (array), reasoning.
-    `;
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: `
+        Candidate Profile: ${JSON.stringify(profile)}
+        Job Description: ${jobDescription}
+        
+        Analyze how well this candidate fits the job. Provide a match score (0-100), key strengths, missing gaps, and a brief reasoning.
+        Return as JSON with fields: score, strengths (array), gaps (array), reasoning.
+      `,
+    });
 
-    const response = await model.generateContent(prompt);
-    const responseText = response.response.text();
-    return JSON.parse(responseText);
+    return JSON.parse(response.text || "{}");
   } catch (error: any) {
     console.error("Error in matchCandidate:", error);
     throw error;
@@ -525,24 +527,24 @@ export const generateContract = async (profile: CandidateProfile, jobDescription
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-    
-    const prompt = `
-      Generate a professional employment contract and company policy document for the following candidate and job role.
-      
-      Candidate: ${profile.full_name} (${profile.email})
-      Job Details: ${jobDescription}
-      
-      The document should include:
-      1. Employment Agreement (Position, Responsibilities, Compensation, Benefits)
-      2. Company Policies (Code of Conduct, Confidentiality, Termination)
-      3. Signature lines for both parties.
-      
-      Format the output in Markdown. Use professional language.
-    `;
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: `
+        Generate a professional employment contract and company policy document for the following candidate and job role.
+        
+        Candidate: ${profile.full_name} (${profile.email})
+        Job Details: ${jobDescription}
+        
+        The document should include:
+        1. Employment Agreement (Position, Responsibilities, Compensation, Benefits)
+        2. Company Policies (Code of Conduct, Confidentiality, Termination)
+        3. Signature lines for both parties.
+        
+        Format the output in Markdown. Use professional language.
+      `,
+    });
 
-    const response = await model.generateContent(prompt);
-    return response.response.text() || "Failed to generate contract.";
+    return response.text || "Failed to generate contract.";
   } catch (error: any) {
     console.error("Error in generateContract:", error);
     throw error;
