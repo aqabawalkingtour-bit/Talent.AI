@@ -2,7 +2,7 @@ name: Deploy Vite App to Pages
 
 on:
   push:
-    branches: [main]
+    branches: [Main]
 
 permissions:
   contents: read
