@@ -33,12 +33,7 @@ export default defineConfig(({ mode }) => {
       hmr: process.env.DISABLE_HMR !== 'true',
     },
 
-    // 6. OPTIMIZE DEPENDENCIES
-    optimizeDeps: {
-      include: ['pdfjs-dist'],
-    },
-
-    // 7. BUILD CONFIGURATION
+    // 6. BUILD CONFIGURATION
     build: {
       rollupOptions: {
         output: {

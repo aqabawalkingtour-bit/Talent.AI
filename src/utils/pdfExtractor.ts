@@ -1,8 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist';
-import workerSrc from 'pdfjs-dist/build/pdf.worker.min.js?url';
 
-// Set up the worker with the correct path
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+// Use a reliable CDN for the worker that matches the installed version
+const PDFJS_VERSION = '4.3.136';
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.mjs`;
 
 /**
  * Extract text from a PDF file (as base64 or ArrayBuffer)
@@ -15,7 +15,8 @@ export async function extractTextFromPDF(pdfData: string | ArrayBuffer): Promise
     
     // Handle base64 string
     if (typeof pdfData === 'string') {
-      const binaryString = atob(pdfData.includes(',') ? pdfData.split(',')[1] : pdfData);
+      const base64Content = pdfData.includes(',') ? pdfData.split(',')[1] : pdfData;
+      const binaryString = atob(base64Content);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i);
