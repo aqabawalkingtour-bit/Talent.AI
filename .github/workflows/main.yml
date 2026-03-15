@@ -3,6 +3,7 @@ name: Deploy Vite App to Pages
 on:
   push:
     branches: [Main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Node
-        uses: actions/node-setup@v4
+        uses: actions/setup-node@v4  # Fixed the name here!
         with:
           node-version: 20
           cache: 'npm'
