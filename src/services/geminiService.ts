@@ -93,6 +93,7 @@ export interface MatchResult {
 }
 
 const MODEL_NAME = "gemini-1.5-flash";
+console.log("Using Gemini Model:", MODEL_NAME);
 
 export const scanCV = async (fileData: string, mimeType: string, jobDescription?: string, isRawText: boolean = false): Promise<{profile: CandidateProfile, match?: MatchResult}> => {
   if (!apiKey) {
@@ -107,6 +108,7 @@ export const scanCV = async (fileData: string, mimeType: string, jobDescription?
         },
       };
 
+  console.log("Calling scanCV with model:", MODEL_NAME);
   const response = await ai.models.generateContent({
     model: MODEL_NAME,
     contents: [
