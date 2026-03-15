@@ -2,7 +2,7 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
 
 // Set the worker source - use the same version as the library
 // The legacy build is more stable for web environments
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.3.136/pdf.worker.min.js`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js`;
 
 /**
  * Extract text from a PDF file (as base64 or ArrayBuffer)
