@@ -1,8 +1,8 @@
-import * as pdfjsLib from 'pdfjs-dist';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
 
-// Use a reliable CDN for the worker that matches the installed version
-const PDFJS_VERSION = '4.3.136';
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.mjs`;
+// Set the worker source - use the same version as the library
+// The legacy build is more stable for web environments
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.3.136/pdf.worker.min.js`;
 
 /**
  * Extract text from a PDF file (as base64 or ArrayBuffer)
