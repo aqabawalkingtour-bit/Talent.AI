@@ -3,7 +3,11 @@ import { supabase } from "./supabaseClient";
 import { db, auth } from "../firebase";
 import { doc, getDoc, setDoc, updateDoc, runTransaction, collection, getDocs, query, orderBy, deleteDoc, serverTimestamp, where, limit } from "firebase/firestore";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const apiKey = process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
+if (!apiKey) {
+  console.error("GEMINI_API_KEY is not set. Please configure it in your environment variables or GitHub Secrets.");
+}
+const ai = new GoogleGenAI({ apiKey });
 
 export enum OperationType {
   CREATE = 'create',
@@ -91,6 +95,9 @@ export interface MatchResult {
 const MODEL_NAME = "gemini-3.1-pro-preview";
 
 export const scanCV = async (fileData: string, mimeType: string, jobDescription?: string, isRawText: boolean = false): Promise<{profile: CandidateProfile, match?: MatchResult}> => {
+  if (!apiKey) {
+    throw new Error("API key is missing. Please set the GEMINI_API_KEY in your GitHub repository Secrets (Settings → Secrets and variables → Actions) and redeploy the app.");
+  }
   const contentPart = isRawText 
     ? { text: `CV Content:\n${fileData}` }
     : {
@@ -189,6 +196,9 @@ export const scanCV = async (fileData: string, mimeType: string, jobDescription?
 };
 
 export const matchCandidate = async (profile: CandidateProfile, jobDescription: string): Promise<MatchResult> => {
+  if (!apiKey) {
+    throw new Error("API key is missing. Please set the GEMINI_API_KEY in your GitHub repository Secrets (Settings → Secrets and variables → Actions) and redeploy the app.");
+  }
   const response = await ai.models.generateContent({
     model: MODEL_NAME,
     contents: `
@@ -542,6 +552,9 @@ export const createPendingRecruiterFirestore = async (email: string, initialCred
 };
 
 export const generateContract = async (profile: CandidateProfile, jobDescription: string): Promise<string> => {
+  if (!apiKey) {
+    throw new Error("API key is missing. Please set the GEMINI_API_KEY in your GitHub repository Secrets (Settings → Secrets and variables → Actions) and redeploy the app.");
+  }
   const response = await ai.models.generateContent({
     model: MODEL_NAME,
     contents: `
