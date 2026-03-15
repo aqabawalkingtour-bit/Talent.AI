@@ -1,7 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import workerSrc from 'pdfjs-dist/build/pdf.worker.min.js?url';
 
-// Set up the worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Set up the worker with the correct path
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
 /**
  * Extract text from a PDF file (as base64 or ArrayBuffer)

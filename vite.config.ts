@@ -32,5 +32,21 @@ export default defineConfig(({ mode }) => {
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
     },
+
+    // 6. OPTIMIZE DEPENDENCIES
+    optimizeDeps: {
+      include: ['pdfjs-dist'],
+    },
+
+    // 7. BUILD CONFIGURATION
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'pdf-worker': ['pdfjs-dist'],
+          },
+        },
+      },
+    },
   };
 });
