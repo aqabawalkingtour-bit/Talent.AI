@@ -319,6 +319,10 @@ export interface UserProfile {
 }
 
 export const getUserProfile = async (userId: string): Promise<UserProfile | null> => {
+  if (!supabase) {
+    console.warn('Supabase is not configured. getUserProfile is unavailable.');
+    return null;
+  }
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
@@ -334,6 +338,10 @@ export const getUserProfile = async (userId: string): Promise<UserProfile | null
 };
 
 export const deductCredit = async (userId: string): Promise<boolean> => {
+  if (!supabase) {
+    console.warn('Supabase is not configured. deductCredit is unavailable.');
+    return false;
+  }
   const { data: profile, error: fetchError } = await supabase
     .from('profiles')
     .select('credits')
