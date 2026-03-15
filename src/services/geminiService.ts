@@ -92,7 +92,7 @@ export interface MatchResult {
   reasoning: string;
 }
 
-const MODEL_NAME = "gemini-3.1-pro-preview";
+const MODEL_NAME = "gemini-1.5-flash";
 
 export const scanCV = async (fileData: string, mimeType: string, jobDescription?: string, isRawText: boolean = false): Promise<{profile: CandidateProfile, match?: MatchResult}> => {
   if (!apiKey) {
