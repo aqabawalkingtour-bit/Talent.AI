@@ -11,8 +11,8 @@ if (!apiKey) {
 // Initialize with the correct GoogleGenAI client
 const ai = new GoogleGenAI({ apiKey });
 
-// Use gemini-1.5-flash for the fastest possible response times
-const MODEL_NAME = "gemini-1.5-flash";
+// Use gemini-1.5-flash-latest for the fastest possible response times and better compatibility
+const MODEL_NAME = "gemini-1.5-flash-latest";
 console.log("Using Gemini Model:", MODEL_NAME);
 
 export enum OperationType {
