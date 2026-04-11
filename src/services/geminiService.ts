@@ -11,8 +11,8 @@ if (!apiKey) {
 // Initialize with the correct GoogleGenAI client
 const ai = new GoogleGenAI({ apiKey });
 
-// Use gemini-3-flash-preview which is the latest and most capable model
-const MODEL_NAME = "gemini-3-flash-preview";
+// Use gemini-1.5-flash for the fastest possible response times
+const MODEL_NAME = "gemini-1.5-flash";
 console.log("Using Gemini Model:", MODEL_NAME);
 
 export enum OperationType {
@@ -136,23 +136,23 @@ export const scanCV = async (fileData: string, mimeType: string, jobDescription?
   }
 
    try {
-    let prompt = `Quickly extract the candidate's professional profile from this CV. 
+    let prompt = `Extract the candidate's profile from this CV. 
     
-    Return ONLY valid JSON (no markdown, no code blocks) with these exact fields:
-    - full_name (string)
-    - email (string or null)
-    - phone (string or null)
-    - location (string or null)
-    - linkedin (string or null)
-    - skills (array of strings)
+    Return ONLY a JSON object with these fields:
+    - full_name
+    - email
+    - phone
+    - location
+    - linkedin
+    - skills (array)
     - experience (array of {title, company, duration, description})
     - education (array of {degree, institution, year})
-    - certifications (array of strings or null)
-    - languages (array of strings or null)
-    - summary (string)
-    ${jobDescription ? `- match_score (number 0-100 based on fit to: "${jobDescription}")` : ''}
+    - certifications (array)
+    - languages (array)
+    - summary
+    ${jobDescription ? `- match_score (0-100 based on fit to: "${jobDescription}")` : ''}
     
-    Be concise and accurate. Return ONLY the JSON object, nothing else.`;
+    IMPORTANT: Return ONLY the JSON. No markdown, no preamble.`;
 
     // Always use text format for faster processing
     const contentPart = { text: `CV Content:\n${fileData}` };
