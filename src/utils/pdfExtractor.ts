@@ -1,8 +1,15 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Set the worker source - use the same version as the library
-// Using unpkg as a more reliable fallback for the worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+// Set the worker source with a fallback mechanism
+const PDF_JS_VERSION = '4.10.38';
+const workerSources = [
+  `https://unpkg.com/pdfjs-dist@${PDF_JS_VERSION}/build/pdf.worker.min.mjs`,
+  `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDF_JS_VERSION}/build/pdf.worker.min.mjs`,
+  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDF_JS_VERSION}/pdf.worker.min.mjs`
+];
+
+// Try to set the worker source
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerSources[0];
 
 /**
  * Extract text from a PDF file (as base64 or ArrayBuffer)
