@@ -12,7 +12,7 @@ if (!apiKey) {
 const ai = new GoogleGenAI({ apiKey });
 
 // Use gemini-1.5-flash for better free-tier quota availability
-const MODEL_NAME = "gemini-1.5-flash-latest";
+const MODEL_NAME = "gemini-2.5-flash";
 console.log("Using Gemini Model:", MODEL_NAME);
 
 export enum OperationType {
