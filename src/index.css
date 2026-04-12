@@ -6,6 +6,20 @@
 }
 
 @layer base {
+  /* 1. Prevent the "Horizontal Wobble" on mobile */
+  html, body {
+    max-width: 100vw;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    @apply bg-gray-50 text-gray-900;
+  }
+
+  /* 2. Improve touch targets for fingers (iOS/Android) */
+  input, button, select, a {
+    @apply min-h-[44px] touch-manipulation;
+  }
+
+  /* 3. Your existing Print Logic */
   @media print {
     body * {
       visibility: hidden;
@@ -29,31 +43,42 @@
   }
 }
 
+@layer components {
+  /* 4. Responsive Table Wrapper */
+  /* Wrap your <table> in a div with this class to allow side-swiping on mobile */
+  .responsive-table-container {
+    @apply w-full overflow-x-auto border border-gray-200 rounded-lg bg-white;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 5. Dashboard Card Layout */
+  /* Use this for the "Add Recruiter" container */
+  .dashboard-card {
+    @apply p-4 md:p-6 bg-white rounded-xl shadow-sm border border-gray-100;
+  }
+}
+
+/* 6. Markdown Content Styles (Mobile Optimized Typography) */
+.markdown-body {
+  @apply text-base leading-relaxed break-words;
+}
+
 .markdown-body h1 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  margin-top: 1.5rem;
-  margin-bottom: 1rem;
+  @apply text-xl md:text-2xl font-bold mt-6 mb-4;
 }
 
 .markdown-body h2 {
-  font-size: 1.25rem;
-  font-weight: 600;
-  margin-top: 1.25rem;
-  margin-bottom: 0.75rem;
+  @apply text-lg md:text-xl font-semibold mt-5 mb-3;
 }
 
 .markdown-body p {
-  margin-bottom: 1rem;
-  line-height: 1.6;
+  @apply mb-4;
 }
 
 .markdown-body ul {
-  list-style-type: disc;
-  padding-left: 1.5rem;
-  margin-bottom: 1rem;
+  @apply list-disc pl-5 mb-4 space-y-2;
 }
 
 .markdown-body li {
-  margin-bottom: 0.5rem;
+  @apply leading-snug;
 }
