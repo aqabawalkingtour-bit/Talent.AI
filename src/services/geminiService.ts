@@ -3,7 +3,7 @@ import { supabase } from "./supabaseClient";
 import { db, auth } from "../firebase";
 import { doc, getDoc, setDoc, updateDoc, runTransaction, collection, getDocs, query, orderBy, deleteDoc, serverTimestamp, where, limit } from "firebase/firestore";
 
-const apiKey = process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
+const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
 if (!apiKey) {
   console.error("GEMINI_API_KEY is not set. Please configure it in your environment variables or GitHub Secrets.");
 }
