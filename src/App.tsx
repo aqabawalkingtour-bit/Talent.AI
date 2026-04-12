@@ -118,6 +118,7 @@ export default function App() {
   const [candidates, setCandidates] = useState<CandidateWithMatch[]>([]);
   const [jobDescription, setJobDescription] = useState('');
   const [isScanning, setIsScanning] = useState(false);
+  const [scanningProgress, setScanningProgress] = useState({ current: 0, total: 0, status: '' });
   const [isMatching, setIsMatching] = useState(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [isGeneratingContract, setIsGeneratingContract] = useState(false);
@@ -389,11 +390,14 @@ export default function App() {
     if (!files || files.length === 0) return;
 
     setIsScanning(true);
+    setScanningProgress({ current: 0, total: files.length, status: 'Starting...' });
     setSuccessMessage(null);
     const newCandidates: CandidateWithMatch[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      setScanningProgress(prev => ({ ...prev, current: i + 1, status: `Processing ${file.name}...` }));
+      
       const isWordDoc = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || 
                         file.name.endsWith('.docx');
       
@@ -405,13 +409,13 @@ export default function App() {
             let scanData: string;
             let isRawText = false;
 
+            setScanningProgress(prev => ({ ...prev, status: `Extracting text from ${file.name}...` }));
             if (isWordDoc) {
               const arrayBuffer = e.target?.result as ArrayBuffer;
               const result = await mammoth.extractRawText({ arrayBuffer });
               scanData = result.value;
               isRawText = true;
             } else if (file.type === 'application/pdf') {
-              // Extract text from PDF for faster processing
               const arrayBuffer = e.target?.result as ArrayBuffer;
               scanData = await extractTextFromPDF(arrayBuffer);
               isRawText = true;
@@ -419,22 +423,20 @@ export default function App() {
               scanData = e.target?.result as string;
             }
 
+            setScanningProgress(prev => ({ ...prev, status: `AI Analysis for ${file.name}...` }));
             const { profile, match } = await scanCV(scanData, file.type, jobDescription, isRawText);
             let isSynced = false;
             
-            // Immediately save to Firestore
             let finalProfile = { ...profile };
             try {
-              console.log("Attempting to save to Firestore:", profile.full_name);
+              setScanningProgress(prev => ({ ...prev, status: `Saving ${profile.full_name} to database...` }));
               const dbData = await saveCandidateToFirestore(profile, match?.score || 0, user?.email || undefined);
               if (dbData && dbData.length > 0) {
                 finalProfile.id = dbData[0].id.toString();
               }
               isSynced = true;
-              setSuccessMessage(`Successfully saved ${profile.full_name} to Firestore!`);
             } catch (dbError: any) {
               console.error("Firestore save failed:", dbError);
-              setErrorMessage(`Failed to save to Firestore: ${dbError.message || 'Unknown error'}.`);
             }
 
             const candidate: CandidateWithMatch = { ...finalProfile, match, isSynced };
@@ -457,6 +459,7 @@ export default function App() {
 
     setCandidates(prev => [...prev, ...newCandidates]);
     setIsScanning(false);
+    setScanningProgress({ current: 0, total: 0, status: '' });
     if (view === 'landing') setView('recruiter');
   };
 
@@ -966,7 +969,25 @@ export default function App() {
                   {isScanning && (
                     <div className="p-12 border border-dashed border-[#141414] flex flex-col items-center justify-center gap-4 bg-white/50">
                       <Loader2 className="animate-spin text-[#141414]" size={32} />
-                      <p className="font-bold uppercase tracking-widest text-xs">Scanning CVs...</p>
+                      <div className="text-center space-y-2">
+                        <p className="font-bold uppercase tracking-widest text-xs">Scanning CVs...</p>
+                        {scanningProgress.total > 0 && (
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-mono opacity-60">
+                              File {scanningProgress.current} of {scanningProgress.total}
+                            </p>
+                            <p className="text-[10px] font-bold text-emerald-600 animate-pulse uppercase tracking-tighter">
+                              {scanningProgress.status}
+                            </p>
+                            <div className="w-48 h-1 bg-[#141414]/10 mx-auto mt-2">
+                              <div 
+                                className="h-full bg-[#141414] transition-all duration-500" 
+                                style={{ width: `${(scanningProgress.current / scanningProgress.total) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -1143,8 +1164,23 @@ export default function App() {
               </div>
 
               {isScanning && (
-                <div className="flex items-center justify-center gap-3 font-bold uppercase tracking-widest text-xs">
-                  <Loader2 className="animate-spin" size={16} /> AI is scanning your profile...
+                <div className="flex flex-col items-center justify-center gap-3">
+                  <div className="flex items-center gap-3 font-bold uppercase tracking-widest text-xs">
+                    <Loader2 className="animate-spin" size={16} /> AI is scanning your profile...
+                  </div>
+                  {scanningProgress.status && (
+                    <p className="text-[10px] font-bold text-emerald-600 animate-pulse uppercase tracking-tighter">
+                      {scanningProgress.status}
+                    </p>
+                  )}
+                  {scanningProgress.total > 1 && (
+                    <div className="w-48 h-1 bg-[#141414]/10 mt-2">
+                      <div 
+                        className="h-full bg-[#141414] transition-all duration-500" 
+                        style={{ width: `${(scanningProgress.current / scanningProgress.total) * 100}%` }}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 

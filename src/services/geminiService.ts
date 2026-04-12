@@ -167,6 +167,9 @@ export const scanCV = async (fileData: string, mimeType: string, jobDescription?
           ],
         },
       ],
+      config: {
+        responseMimeType: "application/json"
+      }
     });
 
     const responseText = response.text || "{}";
