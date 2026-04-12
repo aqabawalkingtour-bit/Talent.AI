@@ -16,7 +16,12 @@ const firebaseConfig = {
 
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Use the provided database ID or default to "(default)" if it's missing or looks like a placeholder
+const databaseId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId.includes('-')) 
+  ? firebaseConfig.firestoreDatabaseId 
+  : "(default)";
+
+export const db = getFirestore(app, databaseId);
 export const auth = getAuth(app);
 
 // Validate Connection to Firestore
