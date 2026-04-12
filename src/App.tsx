@@ -25,7 +25,8 @@ import {
   Award,
   Edit,
   Save,
-  X
+  X,
+  Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
@@ -126,6 +127,7 @@ export default function App() {
   const [isFetchingCandidate, setIsFetchingCandidate] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editedProfile, setEditedProfile] = useState<CandidateProfile | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   
   // Auth & Profile State
   const [user, setUser] = useState<User | null>(null);
@@ -142,6 +144,8 @@ export default function App() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [appStats, setAppStats] = useState({ totalCVs: 0, totalRecruiters: 0 });
   const [isLoadingStats, setIsLoadingStats] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -153,6 +157,8 @@ export default function App() {
     message: '',
     onConfirm: () => {},
   });
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const closeConfirmModal = () => setConfirmModal(prev => ({ ...prev, isOpen: false }));
 
@@ -217,7 +223,6 @@ export default function App() {
     const userProfile = await getUserProfileFirestore(userId);
     if (userProfile) {
       setProfile(userProfile);
-      // Sync legacy credits state for UI compatibility
       setCredits(prev => ({
         ...prev,
         scansTotal: userProfile.credits + prev.scansUsed,
@@ -319,205 +324,111 @@ export default function App() {
     setView('landing');
   };
 
-  // Credit System State (Legacy local state, we'll sync with profile)
   const [credits, setCredits] = useState({
-    jobSlots: 5,
-    jobSlotsUsed: 1, // Current JD counts as 1
-    scansTotal: 100,
-    scansUsed: 0
+    scansUsed: 0,
+    scansTotal: 50,
+    jobSlotsUsed: 0,
+    jobSlots: 5
   });
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  React.useEffect(() => {
-    if (successMessage) {
-      const timer = setTimeout(() => setSuccessMessage(null), 5000);
-      return () => clearTimeout(timer);
+    if (profile && profile.credits < files.length) {
+      setErrorMessage(`Not enough credits. You need ${files.length} credits but only have ${profile.credits}.`);
+      return;
     }
-  }, [successMessage]);
 
-  React.useEffect(() => {
-    if (errorMessage) {
-      const timer = setTimeout(() => setErrorMessage(null), 7000);
-      return () => clearTimeout(timer);
+    setIsScanning(true);
+    setScanningProgress({ current: 0, total: files.length, status: 'Initializing...' });
+    
+    const newCandidates: CandidateWithMatch[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setScanningProgress(prev => ({ ...prev, current: i + 1, status: `Reading ${file.name}...` }));
+      
+      try {
+        let text = '';
+        if (file.type === 'application/pdf') {
+          text = await extractTextFromPDF(file);
+        } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+          const arrayBuffer = await file.arrayBuffer();
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          text = result.value;
+        } else if (file.type.startsWith('image/')) {
+          text = "Image-based CV - text extraction placeholder";
+        } else {
+          text = await file.text();
+        }
+
+        setScanningProgress(prev => ({ ...prev, status: `AI analysis of ${file.name}...` }));
+        const profileData = await scanCV(text);
+        
+        const candidate: CandidateWithMatch = {
+          ...profileData,
+          id: Math.random().toString(36).substr(2, 9),
+          isSynced: false,
+          created_by: user?.email || 'anonymous'
+        };
+        
+        newCandidates.push(candidate);
+      } catch (error) {
+        console.error("Error scanning file:", error);
+      }
     }
-  }, [errorMessage]);
+
+    setCandidates(prev => [...newCandidates, ...prev]);
+    setIsScanning(false);
+    setScanningProgress({ current: 0, total: 0, status: '' });
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteCandidateFromFirestore(id);
+      setCandidates(prev => prev.filter(c => c.id !== id));
+      setSuccessMessage("Candidate deleted successfully!");
+    } catch (error) {
+      console.error("Error deleting candidate:", error);
+      setErrorMessage("Failed to delete candidate.");
+    }
+  };
 
   const fetchCandidates = async () => {
+    if (!user) return;
     setIsLoadingFromDB(true);
     try {
-      const dbCandidates = await getCandidatesFromFirestore();
-      // Only add candidates that aren't already in the local state
-      setCandidates(prev => {
-        const existingIds = new Set(prev.map(c => c.id));
-        const newOnes = dbCandidates
-          .filter(c => !existingIds.has(c.id))
-          .map(c => {
-            // If the DB has a match score, create a basic match object
-            const match = c.match_score !== undefined ? {
-              score: c.match_score,
-              strengths: [],
-              gaps: [],
-              reasoning: "Loaded from database"
-            } : undefined;
-            
-            return { ...c, match, isSynced: true };
-          });
-        return [...prev, ...newOnes];
-      });
-    } catch (error: any) {
-      console.error("Failed to fetch candidates:", error);
-      setErrorMessage(`Failed to load candidates from database: ${error.message}`);
+      const dbCandidates = await getCandidatesByCreatedBy(user.email!);
+      setCandidates(dbCandidates.map(c => ({ ...c, isSynced: true })));
+    } catch (error) {
+      console.error("Error fetching candidates:", error);
     } finally {
       setIsLoadingFromDB(false);
     }
   };
 
-  React.useEffect(() => {
-    if (view === 'recruiter') {
-      fetchCandidates();
-    }
-    if (view === 'admin') {
-      fetchAllUsers();
-    }
-  }, [view]);
-
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    setIsScanning(true);
-    setScanningProgress({ current: 0, total: files.length, status: 'Starting...' });
-    setSuccessMessage(null);
-    const newCandidates: CandidateWithMatch[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      setScanningProgress(prev => ({ ...prev, current: i + 1, status: `Processing ${file.name}...` }));
-      
-      const isWordDoc = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || 
-                        file.name.endsWith('.docx');
-      
-      const reader = new FileReader();
-      
-      const filePromise = new Promise<void>((resolve) => {
-        reader.onload = async (e) => {
-          try {
-            let scanData: string;
-            let isRawText = false;
-
-            setScanningProgress(prev => ({ ...prev, status: `Extracting text from ${file.name}...` }));
-            if (isWordDoc) {
-              const arrayBuffer = e.target?.result as ArrayBuffer;
-              const result = await mammoth.extractRawText({ arrayBuffer });
-              scanData = result.value;
-              isRawText = true;
-            } else if (file.type === 'application/pdf') {
-              const arrayBuffer = e.target?.result as ArrayBuffer;
-              scanData = await extractTextFromPDF(arrayBuffer);
-              isRawText = true;
-            } else {
-              scanData = e.target?.result as string;
-            }
-
-            setScanningProgress(prev => ({ ...prev, status: `AI Analysis for ${file.name}...` }));
-            const { profile, match } = await scanCV(scanData, file.type, jobDescription, isRawText);
-            let isSynced = false;
-            
-            let finalProfile = { ...profile };
-            try {
-              setScanningProgress(prev => ({ ...prev, status: `Saving ${profile.full_name} to database...` }));
-              const dbData = await saveCandidateToFirestore(profile, match?.score || 0, user?.email || undefined);
-              if (dbData && dbData.length > 0) {
-                finalProfile.id = dbData[0].id.toString();
-              }
-              isSynced = true;
-            } catch (dbError: any) {
-              console.error("Firestore save failed:", dbError);
-            }
-
-            const candidate: CandidateWithMatch = { ...finalProfile, match, isSynced };
-            newCandidates.push(candidate);
-          } catch (error) {
-            console.error("Error scanning CV:", error);
-            setErrorMessage(`Error scanning ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          }
-          resolve();
-        };
-      });
-      
-      if (isWordDoc || file.type === 'application/pdf') {
-        reader.readAsArrayBuffer(file);
-      } else {
-        reader.readAsDataURL(file);
-      }
-      await filePromise;
-    }
-
-    setCandidates(prev => [...prev, ...newCandidates]);
-    setIsScanning(false);
-    setScanningProgress({ current: 0, total: 0, status: '' });
-    if (view === 'landing') setView('recruiter');
-  };
-
-  const handleDelete = async (id: string) => {
-    triggerConfirm(
-      "Remove Candidate",
-      "Are you sure you want to remove this candidate from your dashboard?",
-      async () => {
-        try {
-          await deleteCandidateFromFirestore(id);
-          setCandidates(prev => prev.filter(c => c.id !== id));
-          if (selectedCandidateId === id) setSelectedCandidateId(null);
-          setSuccessMessage("Candidate removed successfully.");
-        } catch (error: any) {
-          console.error("Delete failed:", error);
-          setErrorMessage(`Failed to delete candidate: ${error.message}`);
-        }
-      }
-    );
-  };
   const handleMatchAll = async () => {
-    if (!jobDescription.trim()) {
-      setErrorMessage("Please enter a job description first.");
-      return;
-    }
-
-    if (!user || !profile) {
-      setErrorMessage("Please log in to use AI Matching.");
-      return;
-    }
-
-    if (profile.credits <= 0) {
-      setErrorMessage("You've reached your AI Matching limit! Please contact the owner to buy more credits.");
-      return;
-    }
-
+    if (!jobDescription.trim() || !user || !profile) return;
+    
     setIsMatching(true);
     try {
       const updatedCandidates = await Promise.all(
         candidates.map(async (c) => {
-          // Check if we still have credits for this specific candidate
           if (profile.credits <= 0) return c;
           
           try {
             const match = await matchCandidate(c, jobDescription);
             let updated = { ...c, match };
             
-            // Deduct credit from Firestore
             const success = await deductCreditFirestore(user.uid);
             if (success) {
-              // Refresh profile to get updated credits
               await fetchProfile(user.uid);
             } else {
               console.error("Failed to deduct credit.");
               return c;
             }
 
-            // Save to Firestore
             try {
               const dbData = await saveCandidateToFirestore(updated, match.score);
               if (dbData && dbData.length > 0) {
@@ -552,7 +463,7 @@ export default function App() {
   const handleSaveEdit = async () => {
     if (!editedProfile) return;
     
-    setIsScanning(true); // Reuse scanning state for loading
+    setIsScanning(true);
     try {
       await saveCandidateToFirestore(editedProfile, editedProfile.match_score || 0);
       setCandidates(prev => prev.map(c => c.id === editedProfile.id ? { ...editedProfile, isSynced: true } : c));
@@ -601,7 +512,7 @@ export default function App() {
     <ErrorBoundary>
       <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0]">
       {/* Navigation */}
-      <nav className="border-b border-[#141414] px-6 py-4 flex justify-between items-center bg-[#E4E3E0] sticky top-0 z-50 no-print">
+      <nav className="border-b border-[#141414] px-4 md:px-6 py-4 flex justify-between items-center bg-[#E4E3E0] sticky top-0 z-50 no-print">
         <div 
           className="flex items-center gap-2 cursor-pointer" 
           onClick={() => setView('landing')}
@@ -612,95 +523,100 @@ export default function App() {
           <span className="font-bold tracking-tighter text-xl">TALENT.AI</span>
         </div>
         
-        {(!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) && (
-          <div className="bg-amber-100 text-amber-800 px-4 py-1 rounded text-[10px] font-bold uppercase tracking-widest border border-amber-200">
-            Supabase Keys Missing
-          </div>
-        )}
-        
-        <AnimatePresence>
-          {successMessage && (
-            <motion.div 
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="absolute left-1/2 -translate-x-1/2 top-20 bg-emerald-600 text-white px-6 py-3 rounded-full shadow-xl font-bold text-xs uppercase tracking-widest flex items-center gap-2 z-[60]"
-            >
-              <CheckCircle size={16} /> {successMessage}
-              <button onClick={() => setSuccessMessage(null)} className="ml-4 opacity-50 hover:opacity-100">×</button>
-            </motion.div>
-          )}
-          {errorMessage && (
-            <motion.div 
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="absolute left-1/2 -translate-x-1/2 top-20 bg-red-600 text-white px-6 py-3 rounded-full shadow-xl font-bold text-xs uppercase tracking-widest flex items-center gap-2 z-[60]"
-            >
-              <AlertCircle size={16} /> {errorMessage}
-              <button onClick={() => setErrorMessage(null)} className="ml-4 opacity-50 hover:opacity-100">×</button>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <div className="flex items-center gap-4">
+          <button 
+            className="md:hidden p-2 border border-[#141414]"
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+          >
+            {isMenuOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
 
-        <div className="flex items-center gap-8">
-          {/* Role Switcher Tabs */}
-          <div className="flex bg-[#F5F5F3] border border-[#141414] p-1 rounded-sm">
-            <button 
-              onClick={() => setView('recruiter')}
-              className={cn(
-                "px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
-                view === 'recruiter' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5"
-              )}
-            >
-              Recruiter
-            </button>
-            <button 
-              onClick={() => setView('candidate')}
-              className={cn(
-                "px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
-                view === 'candidate' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5"
-              )}
-            >
-              Candidate
-            </button>
-          </div>
-
-          <div className="flex gap-6 text-xs font-bold uppercase tracking-widest items-center">
-            {user ? (
-              <>
-                {profile?.is_admin && (
-                  <button 
-                    onClick={() => setView('admin')}
-                    className={cn("hover:opacity-50 transition-opacity", view === 'admin' && "underline underline-offset-4")}
-                  >
-                    Admin
-                  </button>
-                )}
-                <div className="flex flex-col items-end border-l border-[#141414]/10 pl-6">
-                  <span className="text-[8px] opacity-50">Account</span>
-                  <span className="font-bold lowercase text-[10px]">{user.email}</span>
-                </div>
-                <button 
-                  onClick={handleSignOut}
-                  className="hover:bg-[#141414] hover:text-[#E4E3E0] transition-all border border-[#141414] px-3 py-1 text-[10px]"
-                >
-                  Logout
-                </button>
-              </>
-            ) : (
+          <div className={cn(
+            "fixed inset-0 top-[65px] bg-[#E4E3E0] z-40 p-6 flex flex-col gap-8 transition-transform duration-300 md:static md:inset-auto md:p-0 md:flex-row md:items-center md:gap-8 md:translate-x-0",
+            isMenuOpen ? "translate-x-0" : "translate-x-full"
+          )}>
+            <div className="flex flex-col md:flex-row bg-[#F5F5F3] md:bg-transparent border md:border-none border-[#141414] p-1 rounded-sm">
               <button 
-                onClick={() => setView('landing')}
-                className={cn("hover:opacity-50 transition-opacity", view === 'landing' && "underline underline-offset-4")}
+                onClick={() => { setView('recruiter'); setIsMenuOpen(false); }}
+                className={cn(
+                  "px-4 py-3 md:py-1.5 text-xs md:text-[10px] font-bold uppercase tracking-widest transition-all text-left md:text-center",
+                  view === 'recruiter' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5"
+                )}
               >
-                Login
+                Recruiter
               </button>
-            )}
+              <button 
+                onClick={() => { setView('candidate'); setIsMenuOpen(false); }}
+                className={cn(
+                  "px-4 py-3 md:py-1.5 text-xs md:text-[10px] font-bold uppercase tracking-widest transition-all text-left md:text-center",
+                  view === 'candidate' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5"
+                )}
+              >
+                Candidate
+              </button>
+            </div>
+
+            <div className="flex flex-col md:flex-row gap-6 text-xs font-bold uppercase tracking-widest items-start md:items-center">
+              {user ? (
+                <>
+                  {profile?.is_admin && (
+                    <button 
+                      onClick={() => { setView('admin'); setIsMenuOpen(false); }}
+                      className={cn("hover:opacity-50 transition-opacity", view === 'admin' && "underline underline-offset-4")}
+                    >
+                      Admin
+                    </button>
+                  )}
+                  <div className="flex flex-col items-start md:items-end md:border-l border-[#141414]/10 md:pl-6">
+                    <span className="text-[8px] opacity-50">Account</span>
+                    <span className="font-bold lowercase text-[10px]">{user.email}</span>
+                  </div>
+                  <button 
+                    onClick={() => { handleSignOut(); setIsMenuOpen(false); }}
+                    className="w-full md:w-auto hover:bg-[#141414] hover:text-[#E4E3E0] transition-all border border-[#141414] px-4 py-3 md:px-3 md:py-1 text-[10px] text-center"
+                  >
+                    Logout
+                  </button>
+                </>
+              ) : (
+                <button 
+                  onClick={() => { setView('landing'); setIsMenuOpen(false); }}
+                  className={cn("hover:opacity-50 transition-opacity", view === 'landing' && "underline underline-offset-4")}
+                >
+                  Login
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto px-6 py-12">
+      <AnimatePresence>
+        {successMessage && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed left-1/2 -translate-x-1/2 top-20 bg-emerald-600 text-white px-6 py-3 rounded-full shadow-xl font-bold text-xs uppercase tracking-widest flex items-center gap-2 z-[60] w-[90%] max-w-md justify-center"
+          >
+            <CheckCircle size={16} /> <span className="truncate">{successMessage}</span>
+            <button onClick={() => setSuccessMessage(null)} className="ml-4 opacity-50 hover:opacity-100">×</button>
+          </motion.div>
+        )}
+        {errorMessage && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed left-1/2 -translate-x-1/2 top-20 bg-red-600 text-white px-6 py-3 rounded-full shadow-xl font-bold text-xs uppercase tracking-widest flex items-center gap-2 z-[60] w-[90%] max-w-md justify-center"
+          >
+            <AlertCircle size={16} /> <span className="truncate">{errorMessage}</span>
+            <button onClick={() => setErrorMessage(null)} className="ml-4 opacity-50 hover:opacity-100">×</button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-12">
         <AnimatePresence mode="wait">
           {(!user && !isAuthLoading) ? (
             <motion.div
@@ -708,18 +624,18 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="max-w-md mx-auto mt-20 p-8 bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)]"
+              className="max-w-md mx-auto mt-10 md:mt-20 p-6 md:p-8 bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)]"
             >
-              <h2 className="text-3xl font-bold tracking-tighter mb-6 uppercase">
+              <h2 className="text-2xl md:text-3xl font-bold tracking-tighter mb-4 md:mb-6 uppercase">
                 {isSignUp ? 'Create Account' : `${view === 'candidate' ? 'Candidate' : 'Recruiter'} Login`}
               </h2>
-              <p className="text-xs opacity-60 mb-8 uppercase tracking-widest font-bold">
+              <p className="text-[10px] md:text-xs opacity-60 mb-6 md:mb-8 uppercase tracking-widest font-bold">
                 {isSignUp 
                   ? `Sign up to start ${view === 'candidate' ? 'managing your profile' : 'scanning candidates'}` 
                   : `Enter your credentials to access the ${view === 'candidate' ? 'candidate portal' : 'recruitment agent'}`}
               </p>
               
-              <form onSubmit={handleSignIn} className="space-y-6">
+              <form onSubmit={handleSignIn} className="space-y-4 md:space-y-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-widest opacity-50">Email Address</label>
                   <input 
@@ -747,8 +663,7 @@ export default function App() {
                   disabled={isSigningIn}
                   className="w-full bg-[#141414] text-[#E4E3E0] py-4 font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2 hover:bg-opacity-90 transition-all disabled:opacity-50"
                 >
-                  {isSigningIn ? <Loader2 className="animate-spin" size={16} /> : <Zap size={16} />}
-                  {isSignUp ? 'Create Account' : 'Sign In'}
+                  {isSigningIn ? <Loader2 className="animate-spin" size={16} /> : (isSignUp ? 'Create Account' : 'Sign In')}
                 </button>
                 
                 <div className="relative py-4">
@@ -795,37 +710,37 @@ export default function App() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center min-h-[70vh]"
+              className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12 items-center min-h-[70vh]"
             >
               <div>
-                <h1 className="text-7xl lg:text-8xl font-bold tracking-tighter leading-[0.9] mb-8">
+                <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tighter leading-[0.9] mb-6 md:mb-8">
                   HIRE WITH <br />
                   <span className="italic font-serif font-light">PRECISION.</span>
                 </h1>
-                <p className="text-xl max-w-md mb-12 opacity-70">
+                <p className="text-lg md:text-xl max-w-md mb-8 md:mb-12 opacity-70">
                   The AI-powered recruitment agent that scans CVs, matches skills to roles, and automates the hiring workflow.
                 </p>
-                <div className="flex flex-wrap gap-4">
+                <div className="flex flex-col sm:flex-row gap-4">
                   <button 
                     onClick={() => setView('recruiter')}
-                    className="bg-[#141414] text-[#E4E3E0] px-8 py-4 font-bold uppercase tracking-widest text-sm hover:bg-opacity-90 transition-all flex items-center gap-2"
+                    className="bg-[#141414] text-[#E4E3E0] px-8 py-4 font-bold uppercase tracking-widest text-sm hover:bg-opacity-90 transition-all flex items-center justify-center gap-2"
                   >
                     Start Recruiting <ChevronRight size={16} />
                   </button>
                   <button 
                     onClick={() => setView('candidate')}
-                    className="border border-[#141414] px-8 py-4 font-bold uppercase tracking-widest text-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="border border-[#141414] px-8 py-4 font-bold uppercase tracking-widest text-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-all text-center"
                   >
                     Upload My CV
                   </button>
                 </div>
 
                 {/* Stats Section */}
-                <div className="mt-16 grid grid-cols-2 gap-8 border-t border-[#141414] pt-8">
+                <div className="mt-12 md:mt-16 grid grid-cols-2 gap-4 md:gap-8 border-t border-[#141414] pt-8">
                   <div className="space-y-1">
                     <p className="text-[10px] font-bold uppercase tracking-widest opacity-50">Total CVs Processed</p>
                     <div className="flex items-baseline gap-2">
-                      <span className="text-4xl font-bold tracking-tighter">
+                      <span className="text-3xl md:text-4xl font-bold tracking-tighter">
                         {isLoadingStats ? '...' : appStats.totalCVs}
                       </span>
                       <span className="text-[10px] font-bold uppercase tracking-widest opacity-30">Documents</span>
@@ -834,7 +749,7 @@ export default function App() {
                   <div className="space-y-1">
                     <p className="text-[10px] font-bold uppercase tracking-widest opacity-50">Active Recruiters</p>
                     <div className="flex items-baseline gap-2">
-                      <span className="text-4xl font-bold tracking-tighter">
+                      <span className="text-3xl md:text-4xl font-bold tracking-tighter">
                         {isLoadingStats ? '...' : appStats.totalRecruiters}
                       </span>
                       <span className="text-[10px] font-bold uppercase tracking-widest opacity-30">Partners</span>
@@ -842,15 +757,15 @@ export default function App() {
                   </div>
                 </div>
               </div>
-              <div className="relative aspect-square border border-[#141414] p-8 flex flex-col justify-between group overflow-hidden">
+              <div className="relative aspect-square border border-[#141414] p-6 md:p-8 flex flex-col justify-between group overflow-hidden">
                 <div className="absolute inset-0 bg-[#141414] translate-y-full group-hover:translate-y-0 transition-transform duration-500 ease-in-out" />
                 <div className="relative z-10 flex justify-between items-start group-hover:text-[#E4E3E0] transition-colors">
                   <span className="font-mono text-xs">01 / AUTOMATION</span>
-                  <FileText size={48} strokeWidth={1} />
+                  <FileText size={48} strokeWidth={1} className="w-10 h-10 md:w-12 md:h-12" />
                 </div>
                 <div className="relative z-10 group-hover:text-[#E4E3E0] transition-colors">
-                  <h3 className="text-4xl font-bold tracking-tighter mb-4">CV SCANNING</h3>
-                  <p className="opacity-70 text-sm max-w-xs">
+                  <h3 className="text-3xl md:text-4xl font-bold tracking-tighter mb-4">CV SCANNING</h3>
+                  <p className="opacity-70 text-xs md:text-sm max-w-xs">
                     Instant extraction of skills, experience, and education using Gemini 3 Flash.
                   </p>
                 </div>
@@ -864,22 +779,22 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-12"
+              className="space-y-8 md:space-y-12"
             >
-              <div className="flex justify-between items-end border-b border-[#141414] pb-8">
+              <div className="flex flex-col md:flex-row md:justify-between md:items-end border-b border-[#141414] pb-8 gap-6">
                 <div>
-                  <h2 className="text-5xl font-bold tracking-tighter">RECRUITER DASHBOARD</h2>
-                  <p className="opacity-60 font-mono text-xs mt-2 uppercase tracking-widest">Manage candidates and job requirements</p>
+                  <h2 className="text-3xl md:text-5xl font-bold tracking-tighter">RECRUITER DASHBOARD</h2>
+                  <p className="opacity-60 font-mono text-[10px] md:text-xs mt-2 uppercase tracking-widest">Manage candidates and requirements</p>
                 </div>
-                  <div className="flex flex-col items-end gap-4">
+                  <div className="flex flex-col items-start md:items-end gap-4">
                     {/* Usage Dashboard */}
-                    <div className="hidden md:flex items-center gap-6 px-6 py-3 bg-[#F5F5F3] border border-[#141414] shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]">
-                      <div className="flex flex-col">
+                    <div className="flex items-center gap-4 md:gap-6 px-4 md:px-6 py-3 bg-[#F5F5F3] border border-[#141414] shadow-[2px_2px_0px_0px_rgba(20,20,20,1)] w-full md:w-auto overflow-x-auto">
+                      <div className="flex flex-col min-w-fit">
                         <span className="text-[8px] uppercase font-bold opacity-40">Job Slots</span>
                         <span className="text-xs font-bold">{credits.jobSlotsUsed}/{credits.jobSlots}</span>
                       </div>
                       <div className="w-px h-6 bg-[#141414]/10" />
-                      <div className="flex flex-col">
+                      <div className="flex flex-col min-w-fit">
                         <span className="text-[8px] uppercase font-bold opacity-40">Scan Credits</span>
                         <span className="text-xs font-bold">{profile?.credits ?? 0}</span>
                       </div>
@@ -894,7 +809,7 @@ export default function App() {
                               }
                             }
                           }}
-                          className="ml-2 p-1.5 bg-[#141414] text-[#E4E3E0] hover:opacity-80 transition-opacity flex items-center gap-1"
+                          className="ml-2 p-1.5 bg-[#141414] text-[#E4E3E0] hover:opacity-80 transition-opacity flex items-center gap-1 min-w-fit"
                           title="Admin: Add credits"
                         >
                           <Plus size={10} /> <CreditCard size={10} />
@@ -902,7 +817,7 @@ export default function App() {
                       )}
                     </div>
 
-                  <div className="flex gap-4">
+                  <div className="flex gap-2 md:gap-4 w-full md:w-auto">
                     <input 
                       type="file" 
                       multiple 
@@ -913,14 +828,14 @@ export default function App() {
                     />
                     <button 
                       onClick={() => fileInputRef.current?.click()}
-                      className="border border-[#141414] px-6 py-3 font-bold uppercase tracking-widest text-xs flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                      className="flex-1 md:flex-none border border-[#141414] px-4 md:px-6 py-3 font-bold uppercase tracking-widest text-[10px] md:text-xs flex items-center justify-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                     >
                       <Plus size={16} /> Add CVs
                     </button>
                     <button 
                       onClick={fetchCandidates}
                       disabled={isLoadingFromDB}
-                      className="border border-[#141414] px-6 py-3 font-bold uppercase tracking-widest text-xs flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all disabled:opacity-50"
+                      className="flex-1 md:flex-none border border-[#141414] px-4 md:px-6 py-3 font-bold uppercase tracking-widest text-[10px] md:text-xs flex items-center justify-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all disabled:opacity-50"
                     >
                       <RefreshCw size={16} className={isLoadingFromDB ? "animate-spin" : ""} /> 
                       {isLoadingFromDB ? "Syncing..." : "Sync DB"}
@@ -937,22 +852,22 @@ export default function App() {
                       <Briefcase size={14} /> Job Description
                     </h3>
                     <textarea 
-                      className="w-full h-64 p-4 bg-[#F5F5F3] border border-[#141414] focus:outline-none font-mono text-sm resize-none"
+                      className="w-full h-48 md:h-64 p-4 bg-[#F5F5F3] border border-[#141414] focus:outline-none font-mono text-sm resize-none"
                       placeholder="Paste the job requirements here..."
                       value={jobDescription}
                       onChange={(e) => setJobDescription(e.target.value)}
                     />
                     <button 
                       onClick={handleMatchAll}
-                      disabled={isMatching || candidates.length === 0 || !jobDescription.trim() || credits.scansUsed >= credits.scansTotal}
+                      disabled={isMatching || candidates.length === 0 || !jobDescription.trim() || (profile?.credits || 0) <= 0}
                       className="w-full mt-4 bg-[#141414] text-[#E4E3E0] py-4 font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                     >
                       {isMatching ? <Loader2 className="animate-spin" size={16} /> : <Search size={16} />}
                       {candidates.length === 0 ? "Upload CVs First" : 
                        !jobDescription.trim() ? "Enter Job Description" : 
-                       credits.scansUsed >= credits.scansTotal ? "Out of Credits" : "Run AI Matching"}
+                       (profile?.credits || 0) <= 0 ? "Out of Credits" : "Run AI Matching"}
                     </button>
-                    {credits.scansUsed < credits.scansTotal && candidates.length > 0 && (
+                    {(profile?.credits || 0) > 0 && candidates.length > 0 && (
                       <p className="text-[8px] uppercase font-bold opacity-40 mt-2 text-center">
                         Costs {candidates.filter(c => !c.match).length} credits
                       </p>
@@ -967,7 +882,7 @@ export default function App() {
                   </h3>
                   
                   {isScanning && (
-                    <div className="p-12 border border-dashed border-[#141414] flex flex-col items-center justify-center gap-4 bg-white/50">
+                    <div className="p-8 md:p-12 border border-dashed border-[#141414] flex flex-col items-center justify-center gap-4 bg-white/50">
                       <Loader2 className="animate-spin text-[#141414]" size={32} />
                       <div className="text-center space-y-2">
                         <p className="font-bold uppercase tracking-widest text-xs">Scanning CVs...</p>
@@ -979,7 +894,7 @@ export default function App() {
                             <p className="text-[10px] font-bold text-emerald-600 animate-pulse uppercase tracking-tighter">
                               {scanningProgress.status}
                             </p>
-                            <div className="w-48 h-1 bg-[#141414]/10 mx-auto mt-2">
+                            <div className="w-32 md:w-48 h-1 bg-[#141414]/10 mx-auto mt-2">
                               <div 
                                 className="h-full bg-[#141414] transition-all duration-500" 
                                 style={{ width: `${(scanningProgress.current / scanningProgress.total) * 100}%` }}
@@ -998,28 +913,28 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 gap-4">
+                  <div className="space-y-4">
                     {candidates.sort((a, b) => (b.match?.score || 0) - (a.match?.score || 0)).map((candidate) => (
                       <motion.div 
                         layout
                         key={candidate.id}
                         className={cn(
-                          "bg-white border border-[#141414] p-6 transition-all hover:shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] group",
+                          "bg-white border border-[#141414] p-4 md:p-6 transition-all hover:shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] group",
                           candidate.isHired && "border-emerald-500 bg-emerald-50/50"
                         )}
                       >
-                        <div className="flex justify-between items-start">
+                        <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
                           <div className="flex gap-4">
-                            <div className="w-12 h-12 bg-[#141414] flex items-center justify-center text-[#E4E3E0] font-bold text-xl">
+                            <div className="w-10 h-10 md:w-12 md:h-12 bg-[#141414] flex items-center justify-center text-[#E4E3E0] font-bold text-lg md:text-xl shrink-0">
                               {candidate.full_name?.[0] || '?'}
                             </div>
                             <div>
-                              <h4 className="text-xl font-bold tracking-tight flex items-center gap-2">
+                              <h4 className="text-lg md:text-xl font-bold tracking-tight flex items-center gap-2 flex-wrap">
                                 {candidate.full_name}
                                 {candidate.isHired && <CheckCircle size={16} className="text-emerald-500" />}
                               </h4>
-                              <div className="flex gap-3 mt-1">
-                                <p className="text-[10px] font-mono opacity-60">{candidate.email}</p>
+                              <div className="flex flex-col gap-1 mt-1">
+                                <p className="text-[10px] font-mono opacity-60 break-all">{candidate.email}</p>
                                 {candidate.location && (
                                   <p className="text-[10px] font-mono opacity-60 flex items-center gap-1">
                                     <MapPin size={10} /> {candidate.location}
@@ -1028,11 +943,11 @@ export default function App() {
                               </div>
                             </div>
                           </div>
-                          <div className="flex gap-4 items-start">
+                          <div className="flex gap-4 items-start w-full sm:w-auto justify-between sm:justify-end">
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleDelete(candidate.id);
+                                triggerConfirm("Delete Candidate", `Are you sure you want to delete ${candidate.full_name}?`, () => handleDelete(candidate.id));
                               }}
                               className="p-2 text-red-500 hover:bg-red-50 transition-colors border border-transparent hover:border-red-200"
                               title="Delete Candidate"
@@ -1041,7 +956,7 @@ export default function App() {
                             </button>
                             {candidate.match && (
                               <div className="text-right">
-                                <div className="text-3xl font-bold tracking-tighter">{candidate.match.score}%</div>
+                                <div className="text-2xl md:text-3xl font-bold tracking-tighter">{candidate.match.score}%</div>
                                 <div className="text-[10px] font-bold uppercase tracking-widest opacity-50">Match Score</div>
                               </div>
                             )}
@@ -1050,7 +965,7 @@ export default function App() {
 
                         {candidate.isSynced && (
                           <div className="mt-4 p-2 bg-emerald-100 text-emerald-800 text-[10px] font-bold uppercase tracking-widest border border-emerald-200 flex items-center gap-2">
-                            <CheckCircle size={12} /> Successfully saved to Firestore!
+                            <CheckCircle size={12} /> Successfully saved!
                           </div>
                         )}
 
@@ -1084,22 +999,17 @@ export default function App() {
                           )}
                         </div>
 
-                        <div className="mt-6 pt-6 border-t border-[#141414]/10 flex justify-between items-center">
+                        <div className="mt-6 pt-6 border-t border-[#141414]/10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                           <div className="flex flex-col">
-                            <p className="text-xs italic opacity-60 line-clamp-1 max-w-md">
+                            <p className="text-xs italic opacity-60 line-clamp-2 max-w-md">
                               {candidate.summary}
                             </p>
-                            {candidate.match && (
-                              <span className="text-[8px] font-bold uppercase tracking-widest text-emerald-600 mt-1 flex items-center gap-1">
-                                <CheckCircle size={8} /> Synced to Firestore
-                              </span>
-                            )}
                           </div>
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 w-full sm:w-auto">
                             {!candidate.isHired ? (
                               <button 
                                 onClick={() => handleHire(candidate.id)}
-                                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest hover:bg-opacity-80 transition-all"
+                                className="flex-1 sm:flex-none px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest hover:bg-opacity-80 transition-all"
                               >
                                 Select Candidate
                               </button>
@@ -1107,7 +1017,7 @@ export default function App() {
                               <button 
                                 onClick={() => handleGenerateContract(candidate)}
                                 disabled={isGeneratingContract}
-                                className="px-4 py-2 bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center gap-2"
+                                className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center justify-center gap-2"
                               >
                                 {isGeneratingContract ? <Loader2 className="animate-spin" size={12} /> : <FileText size={12} />}
                                 {candidate.contract ? "View Contract" : "Generate Contract"}
@@ -1129,11 +1039,11 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="max-w-2xl mx-auto space-y-12"
+              className="max-w-2xl mx-auto space-y-8 md:space-y-12"
             >
               <div className="text-center space-y-4">
-                <h2 className="text-5xl font-bold tracking-tighter">CANDIDATE PORTAL</h2>
-                <p className="opacity-60 max-w-md mx-auto">
+                <h2 className="text-3xl md:text-5xl font-bold tracking-tighter">CANDIDATE PORTAL</h2>
+                <p className="text-sm md:text-base opacity-60 max-w-md mx-auto">
                   Upload your CV to see how our AI Agent analyzes your professional profile and matches you to opportunities.
                 </p>
                 {!user && (
@@ -1144,7 +1054,7 @@ export default function App() {
               </div>
 
               <div 
-                className="border-2 border-dashed border-[#141414] p-12 text-center space-y-6 bg-white cursor-pointer hover:bg-[#F5F5F3] transition-colors"
+                className="border-2 border-dashed border-[#141414] p-8 md:p-12 text-center space-y-6 bg-white cursor-pointer hover:bg-[#F5F5F3] transition-colors"
                 onClick={() => fileInputRef.current?.click()}
               >
                 <input 
@@ -1154,18 +1064,18 @@ export default function App() {
                   onChange={handleFileUpload}
                   accept=".pdf,.doc,.docx,.txt,image/*"
                 />
-                <div className="w-16 h-16 bg-[#141414] rounded-full flex items-center justify-center mx-auto text-[#E4E3E0]">
+                <div className="w-12 h-12 md:w-16 md:h-16 bg-[#141414] rounded-full flex items-center justify-center mx-auto text-[#E4E3E0]">
                   <Upload size={24} />
                 </div>
                 <div>
-                  <p className="font-bold uppercase tracking-widest text-sm">Click to upload CV</p>
-                  <p className="text-xs opacity-50 mt-1">PDF, Word, or Image files supported</p>
+                  <p className="font-bold uppercase tracking-widest text-xs md:text-sm">Click to upload CV</p>
+                  <p className="text-[10px] md:text-xs opacity-50 mt-1">PDF, Word, or Image files supported</p>
                 </div>
               </div>
 
               {isScanning && (
                 <div className="flex flex-col items-center justify-center gap-3">
-                  <div className="flex items-center gap-3 font-bold uppercase tracking-widest text-xs">
+                  <div className="flex items-center gap-3 font-bold uppercase tracking-widest text-[10px] md:text-xs">
                     <Loader2 className="animate-spin" size={16} /> AI is scanning your profile...
                   </div>
                   {scanningProgress.status && (
@@ -1174,7 +1084,7 @@ export default function App() {
                     </p>
                   )}
                   {scanningProgress.total > 1 && (
-                    <div className="w-48 h-1 bg-[#141414]/10 mt-2">
+                    <div className="w-32 md:w-48 h-1 bg-[#141414]/10 mt-2">
                       <div 
                         className="h-full bg-[#141414] transition-all duration-500" 
                         style={{ width: `${(scanningProgress.current / scanningProgress.total) * 100}%` }}
@@ -1184,91 +1094,72 @@ export default function App() {
                 </div>
               )}
 
-              {isFetchingCandidate && (
-                <div className="flex items-center justify-center gap-3 font-bold uppercase tracking-widest text-xs">
-                  <Loader2 className="animate-spin" size={16} /> Retrieving your profile...
-                </div>
-              )}
-
               {candidates.length > 0 && !isScanning && (
                 <div className="space-y-6">
-                  <h3 className="font-bold uppercase tracking-widest text-xs border-b border-[#141414] pb-2">Your Uploaded CVs ({candidates.length})</h3>
-                  {candidates.map(c => (
-                    <div key={c.id} className="bg-white border border-[#141414] p-8 space-y-8 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="text-3xl font-bold tracking-tighter">{c.full_name}</h4>
-                          <div className="flex flex-wrap gap-4 mt-2">
-                            <p className="font-mono text-[10px] opacity-60 flex items-center gap-1">
-                              <FileText size={10} /> {c.email}
-                            </p>
-                            {c.phone && (
-                              <p className="font-mono text-[10px] opacity-60 flex items-center gap-1">
-                                <Phone size={10} /> {c.phone}
-                              </p>
-                            )}
-                            {c.location && (
-                              <p className="font-mono text-[10px] opacity-60 flex items-center gap-1">
-                                <MapPin size={10} /> {c.location}
-                              </p>
-                            )}
+                  <h3 className="font-bold uppercase tracking-widest text-xs text-center">Your Professional Profile</h3>
+                  {candidates.map(candidate => (
+                    <div key={candidate.id} className="bg-white border border-[#141414] p-6 md:p-8 shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] space-y-8">
+                      <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
+                        <div className="flex gap-4">
+                          <div className="w-12 h-12 md:w-16 md:h-16 bg-[#141414] text-[#E4E3E0] flex items-center justify-center font-bold text-xl md:text-2xl shrink-0">
+                            {candidate.full_name?.[0] || '?'}
+                          </div>
+                          <div>
+                            <h4 className="text-xl md:text-2xl font-bold tracking-tighter">{candidate.full_name}</h4>
+                            <p className="text-xs font-mono opacity-60 break-all">{candidate.email}</p>
+                            <div className="flex flex-wrap gap-3 mt-2">
+                              {candidate.location && <span className="text-[10px] font-bold uppercase flex items-center gap-1"><MapPin size={10} /> {candidate.location}</span>}
+                              {candidate.phone && <span className="text-[10px] font-bold uppercase flex items-center gap-1"><Phone size={10} /> {candidate.phone}</span>}
+                            </div>
                           </div>
                         </div>
-                        <div className="flex flex-col items-end gap-2">
-                          <div className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest">
-                            {c.match_score ? `Match: ${c.match_score}%` : 'Profile'}
-                          </div>
-                          <button 
-                            onClick={() => {
-                              triggerConfirm(
-                                "Delete CV",
-                                "Are you sure you want to delete this CV? This action cannot be undone.",
-                                async () => {
-                                  await deleteCandidateFromFirestore(c.id);
-                                  setCandidates(prev => prev.filter(cand => cand.id !== c.id));
-                                  setSuccessMessage("CV deleted successfully.");
-                                }
-                              );
-                            }}
-                            className="text-[8px] font-bold uppercase tracking-widest text-red-600 hover:underline"
-                          >
-                            Delete
-                          </button>
-                        </div>
+                        <button 
+                          onClick={() => handleStartEdit(candidate)}
+                          className="w-full sm:w-auto border border-[#141414] p-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex items-center justify-center gap-2 text-xs font-bold uppercase"
+                        >
+                          <Edit size={14} /> Edit Profile
+                        </button>
                       </div>
 
-                      <div className="space-y-4">
-                        <h5 className="font-bold uppercase tracking-widest text-[10px] opacity-50">Professional Summary</h5>
-                        <p className="text-sm leading-relaxed">{c.summary}</p>
+                      <div className="space-y-2">
+                        <h5 className="text-[10px] font-bold uppercase tracking-widest opacity-40">Professional Summary</h5>
+                        <p className="text-sm md:text-base leading-relaxed">{candidate.summary}</p>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-8">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <div className="space-y-4">
-                          <h5 className="font-bold uppercase tracking-widest text-[10px] opacity-50">Expertise</h5>
+                          <h5 className="text-[10px] font-bold uppercase tracking-widest opacity-40">Skills & Expertise</h5>
                           <div className="flex flex-wrap gap-2">
-                            {c.skills.map(s => (
-                              <span key={s} className="px-2 py-1 border border-[#141414] text-[10px] font-bold uppercase">{s}</span>
+                            {candidate.skills.map(skill => (
+                              <span key={skill} className="px-3 py-1 bg-[#F5F5F3] border border-[#141414] text-[10px] font-bold uppercase">
+                                {skill}
+                              </span>
                             ))}
                           </div>
                         </div>
                         <div className="space-y-4">
-                          <h5 className="font-bold uppercase tracking-widest text-[10px] opacity-50">Education</h5>
-                          {c.education.map((e, idx) => (
-                            <div key={idx} className="text-xs">
-                              <p className="font-bold">{e.degree}</p>
-                              <p className="opacity-60">{e.institution}, {e.year}</p>
-                            </div>
-                          ))}
+                          <h5 className="text-[10px] font-bold uppercase tracking-widest opacity-40">Experience</h5>
+                          <div className="space-y-4">
+                            {candidate.experience.map((exp, i) => (
+                              <div key={i} className="border-l-2 border-[#141414] pl-4 py-1">
+                                <p className="font-bold text-sm uppercase">{exp.role}</p>
+                                <p className="text-[10px] font-bold opacity-60 uppercase">{exp.company} • {exp.period}</p>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
 
-                      <div className="flex justify-end gap-4 border-t border-[#141414] pt-6">
-                        <button 
-                          onClick={() => handleStartEdit(c)}
-                          className="flex items-center gap-2 font-bold uppercase tracking-widest text-[10px] hover:opacity-50 transition-opacity"
-                        >
-                          <Edit size={14} /> Edit Profile
-                        </button>
+                      <div className="pt-6 border-t border-[#141414]/10">
+                        <div className="bg-[#141414] text-[#E4E3E0] p-4 md:p-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+                          <div className="text-center sm:text-left">
+                            <p className="text-[10px] font-bold uppercase tracking-widest opacity-50">Profile Status</p>
+                            <p className="font-bold text-sm">Verified by AI Agent</p>
+                          </div>
+                          <div className="flex items-center gap-2 bg-[#E4E3E0] text-[#141414] px-4 py-2 font-bold text-[10px] uppercase tracking-widest">
+                            <CheckCircle size={14} /> Ready for Matching
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1276,18 +1167,18 @@ export default function App() {
               )}
 
               {isEditingProfile && editedProfile && (
-                <div className="fixed inset-0 bg-[#141414]/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-[#141414]/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
                   <motion.div 
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="bg-white border border-[#141414] w-full max-w-2xl max-h-[90vh] overflow-y-auto p-8 space-y-8 shadow-[16px_16px_0px_0px_rgba(20,20,20,1)]"
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="bg-white border border-[#141414] p-6 md:p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-[12px_12px_0px_0px_rgba(20,20,20,1)]"
                   >
-                    <div className="flex justify-between items-center border-b border-[#141414] pb-4">
-                      <h3 className="text-2xl font-bold tracking-tighter uppercase">Edit Your Profile</h3>
-                      <button onClick={() => setIsEditingProfile(false)} className="hover:opacity-50"><X size={24} /></button>
+                    <div className="flex justify-between items-center mb-8">
+                      <h3 className="text-2xl font-bold tracking-tighter uppercase">Edit Profile</h3>
+                      <button onClick={() => setIsEditingProfile(false)} className="p-2 hover:bg-[#F5F5F3]"><X size={24} /></button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold uppercase opacity-50">Full Name</label>
                         <input 
@@ -1322,7 +1213,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
+                    <div className="space-y-2 mb-6">
                       <label className="text-[10px] font-bold uppercase opacity-50">Professional Summary</label>
                       <textarea 
                         className="w-full p-3 bg-[#F5F5F3] border border-[#141414] focus:outline-none text-sm h-32 resize-none"
@@ -1331,7 +1222,7 @@ export default function App() {
                       />
                     </div>
 
-                    <div className="space-y-2">
+                    <div className="space-y-2 mb-8">
                       <label className="text-[10px] font-bold uppercase opacity-50">Skills (Comma separated)</label>
                       <input 
                         className="w-full p-3 bg-[#F5F5F3] border border-[#141414] focus:outline-none text-sm"
@@ -1358,65 +1249,65 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="max-w-4xl mx-auto space-y-8"
+              className="max-w-4xl mx-auto space-y-6 md:space-y-8"
             >
-              <div className="flex justify-between items-center no-print">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 no-print">
                 <button 
                   onClick={() => setView('recruiter')}
-                  className="flex items-center gap-2 font-bold uppercase tracking-widest text-xs hover:opacity-50 transition-opacity"
+                  className="flex items-center gap-2 font-bold uppercase tracking-widest text-[10px] md:text-xs hover:opacity-50 transition-opacity"
                 >
                   <ArrowLeft size={16} /> Back to Dashboard
                 </button>
-                <div className="flex gap-4">
+                <div className="flex gap-2 md:gap-4 w-full sm:w-auto">
                   <button 
                     onClick={copyContract}
-                    className="border border-[#141414] px-4 py-2 font-bold uppercase tracking-widest text-xs flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 sm:flex-none border border-[#141414] px-4 py-2 font-bold uppercase tracking-widest text-[10px] md:text-xs flex items-center justify-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
-                    <Copy size={16} /> Copy Text
+                    <Copy size={16} /> Copy
                   </button>
                   <button 
                     onClick={printContract}
-                    className="bg-[#141414] text-[#E4E3E0] px-6 py-2 font-bold uppercase tracking-widest text-xs flex items-center gap-2 hover:bg-opacity-80 transition-all"
+                    className="flex-1 sm:flex-none bg-[#141414] text-[#E4E3E0] px-4 md:px-6 py-2 font-bold uppercase tracking-widest text-[10px] md:text-xs flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all"
                   >
-                    <Printer size={16} /> Print Contract
+                    <Printer size={16} /> Print
                   </button>
                 </div>
               </div>
 
               <div 
                 id="printable-contract"
-                className="bg-white border border-[#141414] p-12 shadow-xl markdown-body min-h-[1000px]"
+                className="bg-white border border-[#141414] p-6 md:p-12 shadow-xl markdown-body min-h-[600px] md:min-h-[1000px] overflow-x-hidden"
               >
-                <div className="mb-12 border-b-4 border-[#141414] pb-8 flex justify-between items-end">
+                <div className="mb-8 md:mb-12 border-b-4 border-[#141414] pb-6 md:pb-8 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
                   <div>
-                    <h1 className="text-4xl font-bold tracking-tighter mb-0">EMPLOYMENT AGREEMENT</h1>
-                    <p className="text-xs font-mono opacity-60 uppercase tracking-widest mt-2">Generated by TALENT.AI Agent</p>
+                    <h1 className="text-2xl md:text-4xl font-bold tracking-tighter mb-0">EMPLOYMENT AGREEMENT</h1>
+                    <p className="text-[8px] md:text-xs font-mono opacity-60 uppercase tracking-widest mt-2">Generated by TALENT.AI Agent</p>
                   </div>
-                  <div className="text-right">
-                    <p className="font-bold text-sm">DATE: {new Date().toLocaleDateString()}</p>
-                    <p className="text-xs opacity-60">REF: {selectedCandidate.id.toUpperCase()}</p>
+                  <div className="text-left sm:text-right">
+                    <p className="font-bold text-xs md:text-sm">DATE: {new Date().toLocaleDateString()}</p>
+                    <p className="text-[10px] md:text-xs opacity-60">REF: {selectedCandidate.id.toUpperCase()}</p>
                   </div>
                 </div>
                 
                 <ReactMarkdown>{selectedCandidate.contract || ''}</ReactMarkdown>
 
-                <div className="mt-24 grid grid-cols-2 gap-24 no-print-signatures">
+                <div className="mt-16 md:mt-24 grid grid-cols-1 sm:grid-cols-2 gap-12 md:gap-24 no-print-signatures">
                   <div className="border-t border-[#141414] pt-4">
-                    <p className="text-[10px] font-bold uppercase tracking-widest opacity-50 mb-8">Employer Signature</p>
-                    <div className="h-12" />
-                    <p className="font-bold">Authorized Representative</p>
+                    <p className="text-[10px] font-bold uppercase tracking-widest opacity-50 mb-6 md:mb-8">Employer Signature</p>
+                    <div className="h-10 md:h-12" />
+                    <p className="font-bold text-sm">Authorized Representative</p>
                   </div>
                   <div className="border-t border-[#141414] pt-4">
-                    <p className="text-[10px] font-bold uppercase tracking-widest opacity-50 mb-8">Employee Signature</p>
-                    <div className="h-12" />
-                    <p className="font-bold">{selectedCandidate.full_name}</p>
+                    <p className="text-[10px] font-bold uppercase tracking-widest opacity-50 mb-6 md:mb-8">Employee Signature</p>
+                    <div className="h-10 md:h-12" />
+                    <p className="font-bold text-sm">{selectedCandidate.full_name}</p>
                   </div>
                 </div>
               </div>
 
               <div className="bg-[#141414] text-[#E4E3E0] p-6 no-print">
-                <p className="text-xs font-bold uppercase tracking-widest mb-2">Next Steps</p>
-                <p className="text-sm opacity-70">
+                <p className="text-[10px] font-bold uppercase tracking-widest mb-2">Next Steps</p>
+                <p className="text-xs md:text-sm opacity-70">
                   Review the generated contract carefully. You can print it directly or copy the text to your preferred document editor for further customization.
                 </p>
               </div>
@@ -1429,23 +1320,23 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-12"
+              className="space-y-8 md:space-y-12"
             >
-              <div className="flex justify-between items-end border-b border-[#141414] pb-8">
+              <div className="flex flex-col md:flex-row md:justify-between md:items-end border-b border-[#141414] pb-8 gap-4">
                 <div>
-                  <h2 className="text-5xl font-bold tracking-tighter uppercase">Admin Dashboard</h2>
-                  <p className="opacity-60 font-mono text-xs mt-2 uppercase tracking-widest">Manage recruiters and system credits</p>
+                  <h2 className="text-3xl md:text-5xl font-bold tracking-tighter uppercase">Admin Dashboard</h2>
+                  <p className="opacity-60 font-mono text-[10px] md:text-xs mt-2 uppercase tracking-widest">Manage recruiters and system credits</p>
                 </div>
                 <button 
                   onClick={() => setView('recruiter')}
-                  className="bg-[#141414] text-[#E4E3E0] px-6 py-2 font-bold uppercase tracking-widest text-xs flex items-center gap-2"
+                  className="w-full md:w-auto bg-[#141414] text-[#E4E3E0] px-6 py-2 font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2"
                 >
-                  <ArrowLeft size={14} /> Back to Dashboard
+                  <ArrowLeft size={14} /> Back
                 </button>
               </div>
 
               {/* Add New Recruiter Form */}
-              <div className="bg-white border border-[#141414] p-8 shadow-[8px_8px_0px_0px_rgba(20,20,20,1)]">
+              <div className="bg-white border border-[#141414] p-6 md:p-8 shadow-[8px_8px_0px_0px_rgba(20,20,20,1)]">
                 <h3 className="text-xl font-bold tracking-tighter mb-6 uppercase">Add New Recruiter</h3>
                 <form onSubmit={handleAddRecruiter} className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
                   <div className="space-y-2">
@@ -1455,7 +1346,7 @@ export default function App() {
                       required
                       value={newRecruiterEmail}
                       onChange={(e) => setNewRecruiterEmail(e.target.value)}
-                      className="w-full p-3 bg-[#F5F5F3] border border-[#141414] focus:outline-none font-mono text-xs"
+                      className="w-full p-3 bg-[#F5F5F3] border border-[#141414] focus:outline-none text-sm"
                       placeholder="recruiter@company.com"
                     />
                   </div>
@@ -1464,168 +1355,175 @@ export default function App() {
                     <input 
                       type="number"
                       required
-                      min="0"
                       value={newRecruiterCredits}
                       onChange={(e) => setNewRecruiterCredits(parseInt(e.target.value))}
-                      className="w-full p-3 bg-[#F5F5F3] border border-[#141414] focus:outline-none font-mono text-xs"
+                      className="w-full p-3 bg-[#F5F5F3] border border-[#141414] focus:outline-none text-sm"
                     />
                   </div>
                   <button 
                     type="submit"
                     disabled={isAddingRecruiter}
-                    className="bg-[#141414] text-[#E4E3E0] py-3 font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2 hover:bg-opacity-90 transition-all disabled:opacity-50"
+                    className="bg-[#141414] text-[#E4E3E0] py-3.5 font-bold uppercase tracking-widest text-xs hover:bg-opacity-90 transition-all disabled:opacity-50"
                   >
-                    {isAddingRecruiter ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
-                    Add Recruiter
+                    {isAddingRecruiter ? <Loader2 className="animate-spin mx-auto" size={16} /> : 'Create Account'}
                   </button>
                 </form>
-                <p className="text-[8px] font-bold uppercase tracking-widest opacity-40 mt-4">
-                  Note: This creates a pending profile. The recruiter must still sign up with this email to activate their account.
-                </p>
               </div>
 
-              {isLoadingUsers ? (
-                <div className="flex items-center justify-center py-24">
-                  <Loader2 className="animate-spin" size={48} />
+              {/* Users List */}
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xl font-bold tracking-tighter uppercase">Active Recruiters</h3>
+                  <button 
+                    onClick={fetchAllUsers}
+                    className="p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  >
+                    <RefreshCw size={16} className={isLoadingUsers ? "animate-spin" : ""} />
+                  </button>
                 </div>
-              ) : (
-                <div className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
-                  <table className="w-full text-left border-collapse">
+
+                <div className="bg-white border border-[#141414] overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[600px]">
                     <thead>
-                      <tr className="bg-[#F5F5F3] border-b border-[#141414]">
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest opacity-50">Recruiter Email</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest opacity-50">User ID</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest opacity-50">Credits</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest opacity-50">Role</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest opacity-50 text-right">Actions</th>
+                      <tr className="border-b border-[#141414] bg-[#F5F5F3]">
+                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest">User</th>
+                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest">Role</th>
+                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest">Credits</th>
+                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest">Joined</th>
+                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {allUsers.map((u) => (
                         <tr key={u.id} className="border-b border-[#141414]/10 hover:bg-[#F5F5F3]/50 transition-colors">
-                          <td className="p-4 text-sm font-bold">{u.email}</td>
-                          <td className="p-4 text-[10px] font-mono opacity-50">{u.id}</td>
                           <td className="p-4">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold">{u.credits}</span>
-                            </div>
+                            <div className="font-bold text-sm">{u.email}</div>
+                            <div className="text-[8px] font-mono opacity-40">{u.id}</div>
                           </td>
                           <td className="p-4">
                             <span className={cn(
-                              "text-[8px] font-bold uppercase tracking-widest px-2 py-1 border",
-                              u.is_admin ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-blue-100 text-blue-800 border-blue-200"
+                              "px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest border",
+                              u.is_admin ? "bg-amber-100 text-amber-800 border-amber-200" : "bg-blue-100 text-blue-800 border-blue-200"
                             )}>
                               {u.is_admin ? 'Admin' : 'Recruiter'}
                             </span>
                           </td>
-                          <td className="p-4 text-right">
-                            <div className="flex justify-end gap-2">
-                              <button 
-                                onClick={() => handleUpdateUserCredits(u.id, u.credits + 10)}
-                                className="p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                                title="Add 10 Credits"
-                              >
-                                <Plus size={14} />
-                              </button>
-                              <button 
-                                onClick={() => {
-                                  const amount = prompt("Enter new credit amount:", u.credits.toString());
-                                  if (amount !== null) {
-                                    handleUpdateUserCredits(u.id, parseInt(amount));
-                                  }
-                                }}
-                                className="p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                                title="Set Custom Credits"
-                              >
-                                <CreditCard size={14} />
-                              </button>
-                              <button 
-                                onClick={() => handleDeleteUser(u.id)}
-                                disabled={isLoadingUsers}
-                                className="p-2 border border-red-200 text-red-600 hover:bg-red-600 hover:text-white transition-all disabled:opacity-50"
-                                title="Delete Recruiter"
-                              >
-                                {isLoadingUsers ? <Loader2 className="animate-spin" size={14} /> : <Trash2 size={14} />}
-                              </button>
+                          <td className="p-4">
+                            <div className="flex items-center gap-3">
+                              <span className="font-bold text-sm">{u.credits}</span>
+                              <div className="flex gap-1">
+                                <button 
+                                  onClick={() => handleUpdateUserCredits(u.id, u.credits + 10)}
+                                  className="p-1 border border-[#141414]/10 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                                >
+                                  <Plus size={10} />
+                                </button>
+                                <button 
+                                  onClick={() => handleUpdateUserCredits(u.id, Math.max(0, u.credits - 10))}
+                                  className="p-1 border border-[#141414]/10 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                                >
+                                  <Zap size={10} className="rotate-180" />
+                                </button>
+                              </div>
                             </div>
+                          </td>
+                          <td className="p-4 text-[10px] opacity-60">
+                            {u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}
+                          </td>
+                          <td className="p-4 text-right">
+                            {!u.is_admin && (
+                              <button 
+                                onClick={() => triggerConfirm("Delete User", `Are you sure you want to delete ${u.email}?`, () => handleDeleteUser(u.id))}
+                                className="p-2 text-red-500 hover:bg-red-50 transition-colors"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              )}
+              </div>
             </motion.div>
           )}
-        </>
-      )}
-    </AnimatePresence>
-  </main>
+            </>
+          )}
+        </AnimatePresence>
+      </main>
 
-      <footer className="border-t border-[#141414] px-6 py-12 mt-24 no-print">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start gap-12">
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {confirmModal.isOpen && (
+          <div className="fixed inset-0 bg-[#141414]/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white border border-[#141414] p-6 md:p-8 w-full max-sm shadow-[12px_12px_0px_0px_rgba(20,20,20,1)]"
+            >
+              <h3 className="text-xl font-bold tracking-tighter uppercase mb-2">{confirmModal.title}</h3>
+              <p className="text-sm opacity-60 mb-8">{confirmModal.message}</p>
+              <div className="grid grid-cols-2 gap-4">
+                <button 
+                  onClick={closeConfirmModal}
+                  className="border border-[#141414] py-3 font-bold uppercase tracking-widest text-[10px] hover:bg-[#F5F5F3] transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={confirmModal.onConfirm}
+                  className="bg-red-600 text-white py-3 font-bold uppercase tracking-widest text-[10px] hover:bg-red-700 transition-all"
+                >
+                  Confirm
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Footer */}
+      <footer className="border-t border-[#141414] px-4 md:px-6 py-8 md:py-12 mt-12 md:mt-20 no-print">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
           <div className="space-y-4">
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 bg-[#141414] rounded-sm flex items-center justify-center">
-                <Briefcase className="text-[#E4E3E0] w-4 h-4" />
+                <Briefcase className="text-[#E4E3E0] w-3.5 h-3.5" />
               </div>
               <span className="font-bold tracking-tighter text-lg">TALENT.AI</span>
             </div>
-            <p className="text-xs opacity-50 max-w-xs">
-              Empowering recruitment through advanced generative AI. Built with Gemini 3 Flash.
+            <p className="text-[10px] font-bold uppercase tracking-widest opacity-30 max-w-xs">
+              Autonomous recruitment agent powered by Gemini 3 Flash. Built for the future of talent acquisition.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-12">
-            <div className="space-y-4">
-              <h4 className="text-[10px] font-bold uppercase tracking-widest opacity-50">Product</h4>
-              <ul className="text-xs font-bold space-y-2">
-                <li><button className="hover:opacity-50">Features</button></li>
-                <li><button className="hover:opacity-50">Pricing</button></li>
-                <li><button className="hover:opacity-50">API</button></li>
+          <div className="flex flex-wrap gap-8 md:gap-12">
+            <div className="space-y-3">
+              <h4 className="text-[10px] font-bold uppercase tracking-widest opacity-40">Product</h4>
+              <ul className="text-[10px] font-bold uppercase tracking-widest space-y-2">
+                <li><button onClick={() => setView('recruiter')} className="hover:underline">Dashboard</button></li>
+                <li><button onClick={() => setView('candidate')} className="hover:underline">Candidate Portal</button></li>
               </ul>
             </div>
-            <div className="space-y-4">
-              <h4 className="text-[10px] font-bold uppercase tracking-widest opacity-50">Company</h4>
-              <ul className="text-xs font-bold space-y-2">
-                <li><button className="hover:opacity-50">About</button></li>
-                <li><button className="hover:opacity-50">Careers</button></li>
-                <li><button className="hover:opacity-50">Legal</button></li>
-              </ul>
+            <div className="space-y-3">
+              <h4 className="text-[10px] font-bold uppercase tracking-widest opacity-40">Connect</h4>
+              <div className="flex gap-4">
+                <Linkedin size={16} className="opacity-40 hover:opacity-100 cursor-pointer transition-opacity" />
+                <Globe size={16} className="opacity-40 hover:opacity-100 cursor-pointer transition-opacity" />
+              </div>
             </div>
           </div>
         </div>
-        <div className="max-w-7xl mx-auto mt-12 pt-12 border-t border-[#141414]/10 flex justify-between items-center text-[10px] font-bold uppercase tracking-widest opacity-30">
-          <span>© 2026 TALENT.AI AGENT</span>
-          <span>STAY HUMAN. HIRE SMART.</span>
+        <div className="max-w-7xl mx-auto mt-12 md:mt-20 pt-8 border-t border-[#141414]/10 flex flex-col md:flex-row justify-between gap-4">
+          <p className="text-[8px] font-bold uppercase tracking-widest opacity-30">© 2026 TALENT.AI AGENT. ALL RIGHTS RESERVED.</p>
+          <div className="flex gap-6">
+            <p className="text-[8px] font-bold uppercase tracking-widest opacity-30 cursor-pointer hover:opacity-100">Privacy Policy</p>
+            <p className="text-[8px] font-bold uppercase tracking-widest opacity-30 cursor-pointer hover:opacity-100">Terms of Service</p>
+          </div>
         </div>
       </footer>
     </div>
-      {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-[#141414]/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="bg-white border border-[#141414] w-full max-w-md p-8 space-y-6 shadow-[16px_16px_0px_0px_rgba(20,20,20,1)]"
-          >
-            <h3 className="text-2xl font-bold tracking-tighter uppercase">{confirmModal.title}</h3>
-            <p className="text-sm opacity-70">{confirmModal.message}</p>
-            <div className="flex gap-4 pt-4">
-              <button 
-                onClick={closeConfirmModal}
-                className="flex-1 border border-[#141414] py-3 font-bold uppercase tracking-widest text-[10px] hover:bg-[#F5F5F3] transition-all"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={confirmModal.onConfirm}
-                className="flex-1 bg-red-600 text-white py-3 font-bold uppercase tracking-widest text-[10px] hover:bg-red-700 transition-all"
-              >
-                Confirm Delete
-              </button>
-            </div>
-          </motion.div>
-        </div>
-      )}
     </ErrorBoundary>
   );
 }
