@@ -877,11 +877,37 @@ export default function App() {
 
                 {/* Candidates List */}
                 <div className="lg:col-span-2 space-y-4">
-                  <h3 className="font-bold uppercase tracking-widest text-xs flex items-center gap-2">
-                    <UserIcon size={14} /> Candidates ({candidates.length})
-                  </h3>
+                  {(profile?.credits || 0) <= 0 ? (
+                    <div className="p-12 border border-dashed border-[#141414] flex flex-col items-center justify-center gap-4 bg-red-50">
+                      <AlertCircle className="text-red-500" size={48} />
+                      <div className="text-center space-y-2">
+                        <p className="font-bold uppercase tracking-widest text-xs text-red-700">No Credits Available</p>
+                        <p className="text-[10px] opacity-60 text-red-600">You have no scan credits remaining. CVs are hidden until you have credits.</p>
+                        {profile?.is_admin && (
+                          <button 
+                            onClick={async () => {
+                              if (user) {
+                                const success = await addCreditsFirestore(user.uid, 50);
+                                if (success) {
+                                  await fetchProfile(user.uid);
+                                  setSuccessMessage("Admin: Added 50 more scan credits!");
+                                }
+                              }
+                            }}
+                            className="mt-4 px-4 py-2 bg-red-600 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-red-700 transition-all"
+                          >
+                            Add Credits
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <h3 className="font-bold uppercase tracking-widest text-xs flex items-center gap-2">
+                        <UserIcon size={14} /> Candidates ({candidates.length})
+                      </h3>
                   
-                  {isScanning && (
+                      {isScanning && (
                     <div className="p-8 md:p-12 border border-dashed border-[#141414] flex flex-col items-center justify-center gap-4 bg-white/50">
                       <Loader2 className="animate-spin text-[#141414]" size={32} />
                       <div className="text-center space-y-2">
@@ -913,8 +939,8 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="space-y-4">
-                    {candidates.sort((a, b) => (b.match?.score || 0) - (a.match?.score || 0)).map((candidate) => (
+                      <div className="space-y-4">
+                        {candidates.sort((a, b) => (b.match?.score || 0) - (a.match?.score || 0)).map((candidate) => (
                       <motion.div 
                         layout
                         key={candidate.id}
@@ -1025,9 +1051,11 @@ export default function App() {
                             )}
                           </div>
                         </div>
-                      </motion.div>
-                    ))}
-                  </div>
+                        </motion.div>
+                      ))}  
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </motion.div>
