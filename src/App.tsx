@@ -144,6 +144,8 @@ export default function App() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [appStats, setAppStats] = useState({ totalCVs: 0, totalRecruiters: 0 });
   const [isLoadingStats, setIsLoadingStats] = useState(false);
+  const [isRequestingCredits, setIsRequestingCredits] = useState(false);
+  const [showPricing, setShowPricing] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
@@ -316,6 +318,23 @@ export default function App() {
       setErrorMessage(error.message);
     } finally {
       setIsSigningIn(false);
+    }
+  };
+
+  const handleRequestCredits = async (tier: string, credits: number) => {
+    if (!user) return;
+    setIsRequestingCredits(true);
+    try {
+      const { requestCreditsFirestore } = await import('./services/geminiService');
+      const success = await requestCreditsFirestore(user.uid, user.email!, tier, credits);
+      if (success) {
+        setSuccessMessage(`Credit request for ${tier} tier submitted successfully!`);
+        setShowPricing(false);
+      }
+    } catch (error: any) {
+      setErrorMessage(`Failed to request credits: ${error.message}`);
+    } finally {
+      setIsRequestingCredits(false);
     }
   };
 
@@ -878,28 +897,82 @@ export default function App() {
                 {/* Candidates List */}
                 <div className="lg:col-span-2 space-y-4">
                   {(profile?.credits || 0) <= 0 ? (
-                    <div className="p-12 border border-dashed border-[#141414] flex flex-col items-center justify-center gap-4 bg-red-50">
-                      <AlertCircle className="text-red-500" size={48} />
-                      <div className="text-center space-y-2">
-                        <p className="font-bold uppercase tracking-widest text-xs text-red-700">No Credits Available</p>
-                        <p className="text-[10px] opacity-60 text-red-600">You have no scan credits remaining. CVs are hidden until you have credits.</p>
-                        {profile?.is_admin && (
-                          <button 
-                            onClick={async () => {
-                              if (user) {
-                                const success = await addCreditsFirestore(user.uid, 50);
-                                if (success) {
-                                  await fetchProfile(user.uid);
-                                  setSuccessMessage("Admin: Added 50 more scan credits!");
-                                }
-                              }
-                            }}
-                            className="mt-4 px-4 py-2 bg-red-600 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-red-700 transition-all"
-                          >
-                            Add Credits
-                          </button>
-                        )}
+                    <div className="space-y-6">
+                      <div className="p-12 border border-dashed border-[#141414] flex flex-col items-center justify-center gap-4 bg-red-50">
+                        <AlertCircle className="text-red-500" size={48} />
+                        <div className="text-center space-y-2">
+                          <p className="font-bold uppercase tracking-widest text-xs text-red-700">No Credits Available</p>
+                          <p className="text-[10px] opacity-60 text-red-600">You have no scan credits remaining. CVs are hidden until you have credits.</p>
+                          <div className="flex flex-wrap justify-center gap-4 mt-6">
+                            <button 
+                              onClick={() => setShowPricing(!showPricing)}
+                              className="px-6 py-3 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest hover:bg-opacity-90 transition-all flex items-center gap-2"
+                            >
+                              <CreditCard size={14} /> {showPricing ? "Hide Pricing" : "View Pricing & Request Credits"}
+                            </button>
+                            
+                            {profile?.is_admin && (
+                              <button 
+                                onClick={async () => {
+                                  if (user) {
+                                    const success = await addCreditsFirestore(user.uid, 50);
+                                    if (success) {
+                                      await fetchProfile(user.uid);
+                                      setSuccessMessage("Admin: Added 50 more scan credits!");
+                                    }
+                                  }
+                                }}
+                                className="px-6 py-3 bg-red-600 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-red-700 transition-all"
+                              >
+                                Admin: Add 50 Credits
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
+
+                      {showPricing && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="grid grid-cols-1 md:grid-cols-3 gap-4"
+                        >
+                          {[
+                            { name: 'Starter', credits: 10, price: '$19', color: 'bg-white' },
+                            { name: 'Professional', credits: 50, price: '$79', color: 'bg-[#141414] text-[#E4E3E0]', popular: true },
+                            { name: 'Enterprise', credits: 200, price: '$249', color: 'bg-white' }
+                          ].map((tier) => (
+                            <div key={tier.name} className={cn(
+                              "border border-[#141414] p-6 flex flex-col justify-between relative",
+                              tier.color,
+                              tier.popular && "shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]"
+                            )}>
+                              {tier.popular && (
+                                <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-white text-[8px] font-bold uppercase px-2 py-1 tracking-widest">Most Popular</span>
+                              )}
+                              <div>
+                                <h4 className="font-bold uppercase tracking-widest text-xs mb-1">{tier.name}</h4>
+                                <div className="text-3xl font-bold tracking-tighter mb-4">{tier.price}</div>
+                                <ul className="text-[10px] space-y-2 mb-8 uppercase font-bold opacity-70">
+                                  <li className="flex items-center gap-2"><CheckCircle size={10} /> {tier.credits} Scan Credits</li>
+                                  <li className="flex items-center gap-2"><CheckCircle size={10} /> AI Matching</li>
+                                  <li className="flex items-center gap-2"><CheckCircle size={10} /> Priority Support</li>
+                                </ul>
+                              </div>
+                              <button 
+                                onClick={() => handleRequestCredits(tier.name, tier.credits)}
+                                disabled={isRequestingCredits}
+                                className={cn(
+                                  "w-full py-3 text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2",
+                                  tier.name === 'Professional' ? "bg-[#E4E3E0] text-[#141414] hover:bg-white" : "bg-[#141414] text-[#E4E3E0] hover:bg-opacity-80"
+                                )}
+                              >
+                                {isRequestingCredits ? <Loader2 className="animate-spin" size={12} /> : "Request Credits"}
+                              </button>
+                            </div>
+                          ))}
+                        </motion.div>
+                      )}
                     </div>
                   ) : (
                     <>

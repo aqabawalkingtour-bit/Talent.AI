@@ -583,3 +583,35 @@ export const generateContract = async (profile: CandidateProfile, jobDescription
     throw error;
   }
 };
+
+export interface CreditRequest {
+  id: string;
+  userId: string;
+  userEmail: string;
+  tier: string;
+  credits: number;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: any;
+}
+
+export const requestCreditsFirestore = async (userId: string, userEmail: string, tier: string, credits: number): Promise<boolean> => {
+  const path = 'credit_requests';
+  try {
+    const requestId = `req_${Math.random().toString(36).substr(2, 9)}`;
+    const docRef = doc(db, 'credit_requests', requestId);
+    const newRequest: CreditRequest = {
+      id: requestId,
+      userId,
+      userEmail,
+      tier,
+      credits,
+      status: 'pending',
+      created_at: serverTimestamp()
+    };
+    await setDoc(docRef, newRequest);
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+    return false;
+  }
+};
