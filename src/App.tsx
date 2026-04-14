@@ -896,7 +896,161 @@ export default function App() {
 
                 {/* Candidates List */}
                 <div className="lg:col-span-2 space-y-4">
-                  {(profile?.credits || 0) <= 0 ? (
+                  {(profile && profile.credits > 0) ? (
+                    <>
+                      <h3 className="font-bold uppercase tracking-widest text-xs flex items-center gap-2">
+                        <UserIcon size={14} /> Candidates ({candidates.length})
+                      </h3>
+                  
+                      {isScanning && (
+                        <div className="p-8 md:p-12 border border-dashed border-[#141414] flex flex-col items-center justify-center gap-4 bg-white/50">
+                          <Loader2 className="animate-spin text-[#141414]" size={32} />
+                          <div className="text-center space-y-2">
+                            <p className="font-bold uppercase tracking-widest text-xs">Scanning CVs...</p>
+                            {scanningProgress.total > 0 && (
+                              <div className="space-y-1">
+                                <p className="text-[10px] font-mono opacity-60">
+                                  File {scanningProgress.current} of {scanningProgress.total}
+                                </p>
+                                <p className="text-[10px] font-bold text-emerald-600 animate-pulse uppercase tracking-tighter">
+                                  {scanningProgress.status}
+                                </p>
+                                <div className="w-32 md:w-48 h-1 bg-[#141414]/10 mx-auto mt-2">
+                                  <div 
+                                    className="h-full bg-[#141414] transition-all duration-500" 
+                                    style={{ width: `${(scanningProgress.current / scanningProgress.total) * 100}%` }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {candidates.length === 0 && !isScanning && (
+                        <div className="p-12 border border-dashed border-[#141414] flex flex-col items-center justify-center gap-4 bg-white/50">
+                          <Upload className="opacity-20" size={48} />
+                          <p className="font-bold uppercase tracking-widest text-xs opacity-40">No candidates uploaded yet</p>
+                        </div>
+                      )}
+
+                      <div className="space-y-4">
+                        {candidates.sort((a, b) => (b.match?.score || 0) - (a.match?.score || 0)).map((candidate) => (
+                          <motion.div 
+                            layout
+                            key={candidate.id}
+                            className={cn(
+                              "bg-white border border-[#141414] p-4 md:p-6 transition-all hover:shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] group",
+                              candidate.isHired && "border-emerald-500 bg-emerald-50/50"
+                            )}
+                          >
+                            <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
+                              <div className="flex gap-4">
+                                <div className="w-10 h-10 md:w-12 md:h-12 bg-[#141414] flex items-center justify-center text-[#E4E3E0] font-bold text-lg md:text-xl shrink-0">
+                                  {candidate.full_name?.[0] || '?'}
+                                </div>
+                                <div>
+                                  <h4 className="text-lg md:text-xl font-bold tracking-tight flex items-center gap-2 flex-wrap">
+                                    {candidate.full_name}
+                                    {candidate.isHired && <CheckCircle size={16} className="text-emerald-500" />}
+                                  </h4>
+                                  <div className="flex flex-col gap-1 mt-1">
+                                    <p className="text-[10px] font-mono opacity-60 break-all">{candidate.email}</p>
+                                    {candidate.location && (
+                                      <p className="text-[10px] font-mono opacity-60 flex items-center gap-1">
+                                        <MapPin size={10} /> {candidate.location}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex gap-4 items-start w-full sm:w-auto justify-between sm:justify-end">
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    triggerConfirm("Delete Candidate", `Are you sure you want to delete ${candidate.full_name}?`, () => handleDelete(candidate.id));
+                                  }}
+                                  className="p-2 text-red-500 hover:bg-red-50 transition-colors border border-transparent hover:border-red-200"
+                                  title="Delete Candidate"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                                {candidate.match && (
+                                  <div className="text-right">
+                                    <div className="text-2xl md:text-3xl font-bold tracking-tighter">{candidate.match.score}%</div>
+                                    <div className="text-[10px] font-bold uppercase tracking-widest opacity-50">Match Score</div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {candidate.isSynced && (
+                              <div className="mt-4 p-2 bg-emerald-100 text-emerald-800 text-[10px] font-bold uppercase tracking-widest border border-emerald-200 flex items-center gap-2">
+                                <CheckCircle size={12} /> Successfully saved!
+                              </div>
+                            )}
+
+                            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                              <div>
+                                <h5 className="text-[10px] font-bold uppercase tracking-widest opacity-50 mb-2">Top Skills</h5>
+                                <div className="flex flex-wrap gap-2">
+                                  {candidate.skills.slice(0, 5).map(skill => (
+                                    <span key={skill} className="px-2 py-1 bg-[#F5F5F3] border border-[#141414] text-[10px] font-bold uppercase">
+                                      {skill}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                              {candidate.match && (
+                                <div>
+                                  <h5 className="text-[10px] font-bold uppercase tracking-widest opacity-50 mb-2">AI Insights</h5>
+                                  <div className="space-y-1">
+                                    {candidate.match.strengths.slice(0, 2).map(s => (
+                                      <div key={s} className="text-[10px] flex items-center gap-1 text-emerald-700 font-medium">
+                                        <CheckCircle size={10} /> {s}
+                                      </div>
+                                    ))}
+                                    {candidate.match.gaps.slice(0, 1).map(g => (
+                                      <div key={g} className="text-[10px] flex items-center gap-1 text-red-700 font-medium">
+                                        <XCircle size={10} /> Missing: {g}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="mt-6 pt-6 border-t border-[#141414]/10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                              <div className="flex flex-col">
+                                <p className="text-xs italic opacity-60 line-clamp-2 max-w-md">
+                                  {candidate.summary}
+                                </p>
+                              </div>
+                              <div className="flex gap-2 w-full sm:w-auto">
+                                {!candidate.isHired ? (
+                                  <button 
+                                    onClick={() => handleHire(candidate.id)}
+                                    className="flex-1 sm:flex-none px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest hover:bg-opacity-80 transition-all"
+                                  >
+                                    Select Candidate
+                                  </button>
+                                ) : (
+                                  <button 
+                                    onClick={() => handleGenerateContract(candidate)}
+                                    disabled={isGeneratingContract}
+                                    className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center justify-center gap-2"
+                                  >
+                                    {isGeneratingContract ? <Loader2 className="animate-spin" size={12} /> : <FileText size={12} />}
+                                    {candidate.contract ? "View Contract" : "Generate Contract"}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </motion.div>
+                        ))}  
+                      </div>
+                    </>
+                  ) : (
                     <div className="space-y-6">
                       <div className="p-12 border border-dashed border-[#141414] flex flex-col items-center justify-center gap-4 bg-red-50">
                         <AlertCircle className="text-red-500" size={48} />
@@ -974,7 +1128,8 @@ export default function App() {
                         </motion.div>
                       )}
                     </div>
-                  ) : (
+                  )}
+                </div>
                     <>
                       <h3 className="font-bold uppercase tracking-widest text-xs flex items-center gap-2">
                         <UserIcon size={14} /> Candidates ({candidates.length})
